@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Any, List, Union, Optional
 from pathlib import Path
 
 import numpy as np
-from fastrtc import AdditionalOutputs, audio_to_int16, audio_to_float32
+from fastrtc import AdditionalOutputs, audio_to_float32
 from numpy.typing import NDArray
 from scipy.signal import resample
 
@@ -424,30 +424,11 @@ class LocalStream:
             except Exception:
                 pass
 
-            # CRITICAL: Wait for handler to initialize BEFORE starting audio loops
-            # This ensures model is loaded and ready before we start processing audio.
-            # Previously, all three tasks ran in parallel, causing record_loop to feed
-            # audio while handler was still loading the model (6+ seconds), resulting
-            # in stale buffer data and potential zero-audio issues.
-            logger.info("Starting handler initialization (model loading)...")
-            await self.handler.start_up()
-            logger.info("Handler ready - flushing stale audio buffer")
-
-            # Flush any audio that accumulated during model loading
-            # The recording started before model load, so buffer may contain
-            # 6+ seconds of stale audio frames that would cause issues
-            stale_audio = self._robot.media.get_audio_sample()
-            if stale_audio is not None:
-                stale_duration = len(stale_audio) / self._robot.media.get_input_audio_samplerate()
-                stale_nonzero = np.count_nonzero(stale_audio)
-                logger.info(
-                    f"Flushed {stale_duration:.2f}s of stale audio ({stale_nonzero}/{stale_audio.size} nonzero)"
-                )
-            else:
-                logger.debug("No stale audio to flush")
-
-            # Now start the audio processing loops
+            # Run all tasks in parallel (matching working OpenAI-only fork)
+            # The handler's start_up() will connect/load while audio loops run.
+            # For local S2S, the handler's receive() method handles early audio gracefully.
             self._tasks = [
+                asyncio.create_task(self.handler.start_up(), name="openai-handler"),
                 asyncio.create_task(self.record_loop(), name="stream-record-loop"),
                 asyncio.create_task(self.play_loop(), name="stream-play-loop"),
             ]
@@ -514,146 +495,19 @@ class LocalStream:
         self.handler.output_queue = asyncio.Queue()
 
     async def record_loop(self) -> None:
-        """Read mic frames from the recorder and forward them to the handler."""
+        """Read mic frames from the recorder and forward them to the handler.
+
+        This is a simplified version matching the working OpenAI-only fork.
+        The handler is responsible for any audio format conversions.
+        """
         input_sample_rate = self._robot.media.get_input_audio_samplerate()
         logger.debug(f"Audio recording started at {input_sample_rate} Hz")
 
-        # Debug: log sounddevice configuration and test direct capture
-        try:
-            import sounddevice as sd
-            devices = sd.query_devices()
-            default_input = sd.query_devices(kind="input")
-            logger.info(f"SoundDevice default input: {default_input.get('name', 'unknown')}, "
-                        f"channels={default_input.get('max_input_channels', 0)}, "
-                        f"sample_rate={default_input.get('default_samplerate', 0)}")
-            # Log all input devices for debugging
-            for i, dev in enumerate(devices):
-                if dev.get("max_input_channels", 0) > 0:
-                    logger.debug(f"  Input device {i}: {dev.get('name')} (channels={dev.get('max_input_channels')})")
-
-            # Test direct SoundDevice capture (bypassing robot SDK)
-            test_duration = 0.5  # 500ms test
-            test_sr = int(default_input.get("default_samplerate", 16000))
-            test_channels = min(1, int(default_input.get("max_input_channels", 1)))
-            try:
-                test_audio = sd.rec(int(test_duration * test_sr), samplerate=test_sr, channels=test_channels, blocking=True)
-                test_nonzero = np.count_nonzero(test_audio)
-                test_rms = np.sqrt(np.mean(test_audio**2))
-                if test_nonzero > 0:
-                    logger.info(f"Direct SoundDevice test: PASSED (nonzero={test_nonzero}, rms={test_rms:.4f})")
-                else:
-                    logger.warning("Direct SoundDevice test: FAILED - all zeros (microphone issue?)")
-            except Exception as e:
-                logger.warning(f"Direct SoundDevice test failed: {e}")
-        except Exception as e:
-            logger.debug(f"Could not query sounddevice: {e}")
-
-        # Debug: log audio sample info once and write debug WAV
-        _logged_audio_info = False
-        _debug_samples_collected: List[NDArray[np.int16]] = []
-        _debug_sample_count = 0
-        _debug_wav_written = False
-        _consecutive_zero_samples = 0
-        _zero_audio_warned = False
-
         while not self._stop_event.is_set():
-            audio_sample = self._robot.media.get_audio_sample()
-            if audio_sample is not None:
-                # Early zero-audio detection - catch SDK issues quickly
-                if hasattr(audio_sample, "size"):
-                    nonzero_count = np.count_nonzero(audio_sample)
-                    if nonzero_count == 0:
-                        _consecutive_zero_samples += 1
-                        if _consecutive_zero_samples == 5:
-                            logger.warning(
-                                "AUDIO ISSUE: %d consecutive zero-audio samples detected! "
-                                "Attempting to restart audio recording stream...",
-                                _consecutive_zero_samples
-                            )
-                            # Try restarting the audio stream - it may have stalled
-                            try:
-                                self._robot.media.stop_recording()
-                                await asyncio.sleep(0.1)
-                                self._robot.media.start_recording()
-                                await asyncio.sleep(0.2)
-                                # Flush any stale data after restart
-                                _ = self._robot.media.get_audio_sample()
-                                logger.info("Audio stream restarted - continuing")
-                            except Exception as e:
-                                logger.error(f"Failed to restart audio stream: {e}")
-                        elif _consecutive_zero_samples >= 10 and not _zero_audio_warned:
-                            logger.error(
-                                "AUDIO ISSUE: %d consecutive zero-audio samples after restart! "
-                                "The robot SDK audio capture is not working. "
-                                "Check: (1) microphone device selection, (2) audio permissions, "
-                                "(3) sounddevice stream state. Direct SD test passed but SDK fails.",
-                                _consecutive_zero_samples
-                            )
-                            _zero_audio_warned = True
-                    else:
-                        if _consecutive_zero_samples > 0:
-                            logger.debug(f"Audio recovered after {_consecutive_zero_samples} zero samples")
-                        _consecutive_zero_samples = 0
-                        _zero_audio_warned = False
-
-                # Debug: comprehensive logging of raw audio BEFORE any conversion
-                if not _logged_audio_info:
-                    sample_type = type(audio_sample).__name__
-                    if hasattr(audio_sample, "shape"):
-                        raw_arr = audio_sample
-                        logger.info(
-                            f"Raw audio: type={sample_type}, shape={raw_arr.shape}, dtype={raw_arr.dtype}, "
-                            f"min={raw_arr.min():.6f}, max={raw_arr.max():.6f}, "
-                            f"nonzero={np.count_nonzero(raw_arr)}/{raw_arr.size}"
-                        )
-                        # Check if it looks like float32 in [-1, 1] range
-                        if raw_arr.dtype == np.float32:
-                            logger.info("Audio is float32 - will use audio_to_int16() for conversion")
-                        elif raw_arr.dtype == np.int16:
-                            logger.info("Audio is already int16")
-                        else:
-                            logger.warning(f"Unexpected audio dtype: {raw_arr.dtype}")
-                    elif isinstance(audio_sample, (bytes, bytearray, memoryview)):
-                        raw_bytes = bytes(audio_sample)
-                        logger.info(f"Raw audio: type={sample_type}, len={len(raw_bytes)} bytes")
-                        # Log first 32 bytes as hex to inspect
-                        logger.info(f"First 32 bytes (hex): {raw_bytes[:32].hex()}")
-                        # Try interpreting as both int16 and float32
-                        try:
-                            as_int16 = np.frombuffer(raw_bytes[:64], dtype=np.int16)
-                            as_float32 = np.frombuffer(raw_bytes[:64], dtype=np.float32)
-                            logger.info(f"As int16: min={as_int16.min()}, max={as_int16.max()}, nonzero={np.count_nonzero(as_int16)}")
-                            logger.info(f"As float32: min={as_float32.min():.6f}, max={as_float32.max():.6f}")
-                        except Exception as e:
-                            logger.warning(f"Could not interpret raw bytes: {e}")
-                    else:
-                        logger.info(f"Audio sample: type={sample_type}")
-                    _logged_audio_info = True
-
-                # Convert to int16 for handler (handles bytes or float32 input)
-                if isinstance(audio_sample, (bytes, bytearray, memoryview)):
-                    # Bytes-like -> interpret as int16 PCM
-                    audio_frame = np.frombuffer(audio_sample, dtype=np.int16)
-                else:
-                    audio_frame = audio_to_int16(audio_sample)
-
-                # Collect samples for debug WAV (first ~2 seconds)
-                _debug_sample_count += 1
-                if not _debug_wav_written and len(_debug_samples_collected) < 100:
-                    _debug_samples_collected.append(audio_frame.copy())
-                elif not _debug_wav_written and len(_debug_samples_collected) >= 100:
-                    # Write debug WAV file
-                    try:
-                        import soundfile as sf
-                        debug_audio = np.concatenate(_debug_samples_collected)
-                        debug_path = "/tmp/reachy_mic_debug.wav"
-                        sf.write(debug_path, debug_audio, input_sample_rate)
-                        logger.info(f"Debug mic audio saved to {debug_path} ({len(debug_audio)} samples, {len(debug_audio)/input_sample_rate:.2f}s)")
-                    except Exception as e:
-                        logger.warning(f"Could not write debug WAV: {e}")
-                    _debug_wav_written = True
-                    _debug_samples_collected = []  # Free memory
-
+            audio_frame = self._robot.media.get_audio_sample()
+            if audio_frame is not None:
+                # Pass audio directly to handler (float32 from SDK)
+                # Handler will convert to int16 if needed
                 await self.handler.receive((input_sample_rate, audio_frame))
             await asyncio.sleep(0)  # avoid busy loop
 

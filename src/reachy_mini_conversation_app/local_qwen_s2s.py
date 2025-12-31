@@ -322,10 +322,11 @@ class LocalQwenS2SHandler(AsyncStreamHandler):
         except Exception as e:
             logger.error("Failed to generate greeting: %s", e)
 
-    async def receive(self, frame: Tuple[int, NDArray[np.int16]]) -> None:
+    async def receive(self, frame: Tuple[int, NDArray[Any]]) -> None:
         """Receive audio frame from the microphone.
 
         Implements simple energy-based VAD to detect speech boundaries.
+        Accepts float32 audio in [-1, 1] range (from SDK) or int16.
         """
         if self.model is None or self._shutdown_requested:
             return
@@ -364,25 +365,31 @@ class LocalQwenS2SHandler(AsyncStreamHandler):
                 audio_frame.min(),
                 audio_frame.max(),
                 np.count_nonzero(audio_frame),
-                len(audio_frame),
+                audio_frame.size,
             )
             self._input_sr_logged = True
 
-        # Reshape if needed
+        # Reshape if needed (stereo -> mono)
         if audio_frame.ndim == 2:
             if audio_frame.shape[1] > audio_frame.shape[0]:
                 audio_frame = audio_frame.T
             if audio_frame.shape[1] > 1:
                 audio_frame = audio_frame[:, 0]
 
-        # Resample if needed
+        # Resample if needed (do this in float domain to preserve precision)
         if INPUT_SAMPLE_RATE != input_sample_rate:
             audio_frame = np.asarray(
-                resample(audio_frame, int(len(audio_frame) * INPUT_SAMPLE_RATE / input_sample_rate)), dtype=np.int16
+                resample(audio_frame, int(len(audio_frame) * INPUT_SAMPLE_RATE / input_sample_rate)),
+                dtype=np.float32,
             )
 
-        # Convert to float for processing
-        audio_float = np.asarray(audio_frame, dtype=np.float32) / 32768.0
+        # Convert to float32 in [-1, 1] range for processing
+        # Handle both float32 (from SDK, already normalized) and int16 (legacy) formats
+        if audio_frame.dtype == np.int16:
+            audio_float = np.asarray(audio_frame, dtype=np.float32) / 32768.0
+        else:
+            # Already float32, ensure it's in the right range
+            audio_float = np.asarray(audio_frame, dtype=np.float32)
 
         # Simple energy-based VAD
         rms = np.sqrt(np.mean(audio_float**2))

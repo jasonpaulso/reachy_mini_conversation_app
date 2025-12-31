@@ -73,8 +73,10 @@ src/reachy_mini_conversation_app/
 
 **Audio Processing:**
 - 24kHz sample rate for both OpenAI and Qwen3-Omni
-- Energy-based VAD in local mode (configurable thresholds)
-- Resample via `scipy.signal.resample` with explicit `np.asarray` cast for type safety
+- SDK provides float32 audio in [-1, 1] range - preserve float domain throughout pipeline
+- `console.py` passes float32 directly to handler without conversion (handler responsible for format conversion)
+- Energy-based VAD in local mode (configurable thresholds via `LOCAL_S2S_VAD_THRESHOLD`)
+- Resample in float domain via `scipy.signal.resample` with `dtype=np.float32` (preserves precision vs int16)
 - Debug audio files saved to `/tmp/qwen_debug_audio.wav` for troubleshooting
 
 **Handler Interface:**
@@ -160,41 +162,67 @@ def __init__(self, handler: "Union[OpenaiRealtimeHandler, LocalQwenS2SHandler]")
 ```
 Lazy-load heavy dependencies (MLX, transformers) only when needed. Use TYPE_CHECKING for forward references to enable type hints without runtime imports, then conditionally import at runtime based on config flags.
 
-**Audio Buffer Management (VAD-based):**
+**Audio Pipeline (Float32 Preservation):**
 ```python
-# Resample with explicit type cast for scipy.signal.resample
-if INPUT_SAMPLE_RATE != input_sample_rate:
-    audio_frame = np.asarray(resample(
-        audio_frame,
-        int(len(audio_frame) * INPUT_SAMPLE_RATE / input_sample_rate)
-    ), dtype=np.int16)
+# Handler receives float32 audio directly from console.py (no conversion)
+async def receive(self, frame: Tuple[int, NDArray[Any]]) -> None:
+    input_sample_rate, audio_frame = frame
 
-# Collect audio frames during speech
-self._audio_buffer.append(audio_to_int16(audio_float))
+    # Resample in FLOAT domain to preserve precision (NOT int16)
+    if INPUT_SAMPLE_RATE != input_sample_rate:
+        audio_frame = np.asarray(
+            resample(audio_frame, int(len(audio_frame) * INPUT_SAMPLE_RATE / input_sample_rate)),
+            dtype=np.float32,  # Preserve float domain - int16 truncates precision
+        )
 
-# Process complete utterance after silence threshold
-if self._silence_frames >= self._silence_threshold_frames:
-    audio_data = np.concatenate(self._audio_buffer)
-    self._audio_buffer = []
-    asyncio.create_task(self._process_utterance(audio_data))
+    # Dual-format support: handle float32 (from SDK) or int16 (legacy)
+    if audio_frame.dtype == np.int16:
+        audio_float = np.asarray(audio_frame, dtype=np.float32) / 32768.0
+    else:
+        audio_float = np.asarray(audio_frame, dtype=np.float32)  # Already normalized
+
+    # Simple energy-based VAD
+    rms = np.sqrt(np.mean(audio_float**2))
+    is_speech = rms > self._vad_threshold
+
+    # Collect audio during speech
+    if is_speech:
+        self._audio_buffer.append((audio_float * 32768.0).astype(np.int16))
+
+    # Process utterance after silence threshold
+    if self._silence_frames >= self._silence_threshold_frames:
+        audio_data = np.concatenate(self._audio_buffer)
+        self._audio_buffer = []
+        asyncio.create_task(self._process_utterance(audio_data))
 ```
-Energy-based VAD with RMS threshold (configurable via `LOCAL_S2S_VAD_THRESHOLD`, default 0.02), minimum speech frames (`_min_speech_frames=5`), and silence detection (`_silence_threshold_frames=30` for ~1.25s). Resample operations require explicit `np.asarray` cast since scipy returns Any.
+**CRITICAL**: Resample in float32 domain to preserve audio precision. Previous int16 resampling truncated values and degraded quality. SDK provides float32 in [-1, 1] range - `console.py` passes it directly to handler. Handler supports both float32 (normalized) and int16 (legacy) formats. Energy-based VAD with configurable RMS threshold (`LOCAL_S2S_VAD_THRESHOLD`, default 0.02), minimum speech frames (`_min_speech_frames=5`), silence detection (`_silence_threshold_frames=30` for ~1.25s).
 
-**Headless Audio Lifecycle (Sequential Startup):**
+**Parallel Task Startup (Headless Mode):**
 ```python
-# CRITICAL: Wait for handler startup BEFORE starting audio loops
-await handler.start_up()  # 6+ seconds for model loading
-logger.info("Handler ready - flushing stale audio buffer")
-
-# Flush stale audio accumulated during model load
-for _ in range(100):  # Discard ~4 seconds at 24kHz
-    self._robot.media.audio.get_audio_sample()
-
-# NOW start audio loops - handler is ready to process
-self._tasks.append(asyncio.create_task(self.record_loop()))
-self._tasks.append(asyncio.create_task(self.play_loop()))
+# All tasks start in parallel - handler init happens concurrently with audio loops
+# Handler's receive() method discards stale audio buffers (warmup logic)
+self._tasks = [
+    asyncio.create_task(self.handler.start_up(), name="handler-startup"),
+    asyncio.create_task(self.record_loop(), name="record-loop"),
+    asyncio.create_task(self.play_loop(), name="play-loop"),
+]
 ```
-Sequential startup prevents audio loss: wait for `handler.start_up()` to complete (model loading), flush stale audio from buffer, then start record/play loops. Without this, audio captured during model load is lost or contains zeros.
+Simplified from sequential startup (matching working OpenAI fork). Handler's `receive()` method includes audio warmup logic to discard stale buffers accumulated during model loading (first 50 frames or until real audio detected). This allows `emit()` to start consuming audio immediately without blocking on model load.
+
+**Audio Warmup (Stale Buffer Discard):**
+```python
+# In handler's receive() method - discard pre-allocated zero buffers
+if not hasattr(self, "_audio_warmup_complete"):
+    self._audio_warmup_frames = getattr(self, "_audio_warmup_frames", 0) + 1
+    has_audio = np.count_nonzero(audio_frame) > frame_samples * 0.01  # >1% nonzero
+
+    # Discard first 50 frames (~2s) OR until we see real audio
+    if self._audio_warmup_frames < 50 and not has_audio:
+        return  # Skip processing
+
+    self._audio_warmup_complete = True
+```
+Robot's audio backend pre-allocates large buffers containing zeros until consumed in real-time. Warmup logic prevents processing stale/silent frames by discarding early audio until real speech detected or timeout (50 frames ~2s).
 
 **Background Task Management (Greeting & Utterances):**
 ```python
@@ -406,6 +434,16 @@ Each profile defines enabled tools via `tools.txt`. Tools can be profile-specifi
 - Thread-safe camera worker with face tracking integration (30Hz+ polling)
 - Type safety improvements: `TYPE_CHECKING` guards, Union types for dual-mode handlers
 
+**Audio Pipeline Float32 Fix (762b9cc - CRITICAL):**
+- **Root Cause**: SDK provides float32 in [-1, 1] range, but `console.py` was converting to int16, then `local_qwen_s2s.py` resampled in int16 domain (truncating precision), then converted back to float
+- **Fix**: Preserve float32 throughout pipeline - `console.py` passes audio directly to handler without conversion
+- **Impact**: Resampling now happens in float domain (`dtype=np.float32`) preserving audio precision vs previous int16 truncation
+- Dual-format support: handler accepts float32 (from SDK) or int16 (legacy) and normalizes appropriately
+- Simplified `record_loop()` matching working OpenAI fork - removed complex int16 conversion logic
+- Parallel task startup (start_up, record_loop, play_loop run concurrently) vs previous sequential pattern
+- Audio warmup logic moved into handler's `receive()` method - discards first 50 frames or until real audio detected
+- Enhanced debug logging: first audio frame stats (shape, dtype, min/max, nonzero count)
+
 **Local S2S Integration (feature/local-s2s-qwen3-omni - COMPLETE):**
 - Full working implementation of on-device speech-to-speech using Qwen3-Omni via MLX
 - Performance: ~950ms TTFT using `generate_stream()` (down from ~15s batch mode), ~260ms after warm-up
@@ -414,7 +452,6 @@ Each profile defines enabled tools via `tools.txt`. Tools can be profile-specifi
 - JIT warm-up during `start_up()` eliminates ~2s compilation delay on first inference
 - Background greeting generation (doesn't block audio loops), skippable via `LOCAL_S2S_SKIP_GREETING`
 - Energy-based VAD with configurable thresholds (`LOCAL_S2S_VAD_THRESHOLD`)
-- Sequential startup pattern: wait for handler.start_up() → flush stale buffer → start audio loops
 - Future optimizations identified: prefix caching (65% TTFT reduction potential), model persistence, Silero VAD, tool calling integration
 
 **Audio Feature Passing Fix (CRITICAL):**
@@ -451,7 +488,8 @@ Each profile defines enabled tools via `tools.txt`. Tools can be profile-specifi
 - Model reloads on each Gradio session because handler is recreated per recording session
 - First call after load is slow (~2s) due to JIT compilation - warm-up eliminates this
 - Must check `_shutdown_requested` throughout async flows to prevent race conditions
-- **Headless audio timing (CRITICAL)**: Audio loops MUST wait for `handler.start_up()` completion, then flush stale buffer before processing input (see "Headless Audio Lifecycle" pattern)
+- **Audio pipeline (CRITICAL)**: Preserve float32 domain - SDK provides float32 in [-1, 1], resample in float domain (`dtype=np.float32`) not int16 (truncates precision)
+- **Parallel startup**: Tasks start concurrently (handler.start_up, record_loop, play_loop) - handler's `receive()` discards stale audio buffers (warmup logic)
 - Greeting generation runs as background task - track `_greeting_task` for clean shutdown cancellation
 <!-- END AUTO-MANAGED -->
 
