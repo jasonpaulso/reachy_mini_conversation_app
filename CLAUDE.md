@@ -66,6 +66,8 @@ src/reachy_mini_conversation_app/
 **Configuration:**
 - `.env` file for API keys and feature flags
 - `LOCAL_S2S_ENABLED`, `LOCAL_S2S_MODEL`, `LOCAL_S2S_SPEAKER` control local inference
+- `LOCAL_S2S_VAD_THRESHOLD` (default 0.02) - RMS threshold for speech detection in local mode
+- `LOCAL_S2S_SKIP_GREETING` (default false) - Skip greeting generation, useful for Gradio mode
 - `OPENAI_API_KEY` only required when `LOCAL_S2S_ENABLED=false` (cloud mode), auto-downloaded from HuggingFace if missing
 - Settings UI and API key download skipped entirely when local S2S is enabled
 
@@ -176,7 +178,39 @@ if self._silence_frames >= self._silence_threshold_frames:
     self._audio_buffer = []
     asyncio.create_task(self._process_utterance(audio_data))
 ```
-Energy-based VAD with RMS threshold (`_vad_threshold=0.02`), minimum speech frames (`_min_speech_frames=5`), and silence detection (`_silence_threshold_frames=30` for ~1.25s). Resample operations require explicit `np.asarray` cast since scipy returns Any.
+Energy-based VAD with RMS threshold (configurable via `LOCAL_S2S_VAD_THRESHOLD`, default 0.02), minimum speech frames (`_min_speech_frames=5`), and silence detection (`_silence_threshold_frames=30` for ~1.25s). Resample operations require explicit `np.asarray` cast since scipy returns Any.
+
+**Headless Audio Lifecycle (Sequential Startup):**
+```python
+# CRITICAL: Wait for handler startup BEFORE starting audio loops
+await handler.start_up()  # 6+ seconds for model loading
+logger.info("Handler ready - flushing stale audio buffer")
+
+# Flush stale audio accumulated during model load
+for _ in range(100):  # Discard ~4 seconds at 24kHz
+    self._robot.media.audio.get_audio_sample()
+
+# NOW start audio loops - handler is ready to process
+self._tasks.append(asyncio.create_task(self.record_loop()))
+self._tasks.append(asyncio.create_task(self.play_loop()))
+```
+Sequential startup prevents audio loss: wait for `handler.start_up()` to complete (model loading), flush stale audio from buffer, then start record/play loops. Without this, audio captured during model load is lost or contains zeros.
+
+**Background Task Management (Greeting & Utterances):**
+```python
+# Greeting as background task (doesn't block emit() startup)
+if not config.LOCAL_S2S_SKIP_GREETING:
+    self._greeting_task = asyncio.create_task(self.generate_greeting())
+
+# Track tasks for proper shutdown
+async def shut_down(self):
+    self._shutdown_requested = True
+    if self._greeting_task:
+        self._greeting_task.cancel()
+    if self._utterance_task:
+        self._utterance_task.cancel()
+```
+Greeting generation runs in background to allow `emit()` to start consuming audio immediately (like OpenAI Realtime). Track tasks for clean cancellation on shutdown. Skip greeting via `LOCAL_S2S_SKIP_GREETING=true` for faster Gradio startup.
 
 **Streaming Generation (Low-Latency Response):**
 ```python
@@ -378,8 +412,9 @@ Each profile defines enabled tools via `tools.txt`. Tools can be profile-specifi
 - Handler implements `fastrtc.AsyncStreamHandler` interface matching OpenAI Realtime path
 - Config-driven selection: `LOCAL_S2S_ENABLED` chooses between cloud and local inference
 - JIT warm-up during `start_up()` eliminates ~2s compilation delay on first inference
-- Automatic startup greeting generation (like OpenAI Realtime)
-- Energy-based VAD with configurable thresholds for speech detection
+- Background greeting generation (doesn't block audio loops), skippable via `LOCAL_S2S_SKIP_GREETING`
+- Energy-based VAD with configurable thresholds (`LOCAL_S2S_VAD_THRESHOLD`)
+- Sequential startup pattern: wait for handler.start_up() → flush stale buffer → start audio loops
 - Future optimizations identified: prefix caching (65% TTFT reduction potential), model persistence, Silero VAD, tool calling integration
 
 **Audio Feature Passing Fix (CRITICAL):**
@@ -416,6 +451,8 @@ Each profile defines enabled tools via `tools.txt`. Tools can be profile-specifi
 - Model reloads on each Gradio session because handler is recreated per recording session
 - First call after load is slow (~2s) due to JIT compilation - warm-up eliminates this
 - Must check `_shutdown_requested` throughout async flows to prevent race conditions
+- **Headless audio timing (CRITICAL)**: Audio loops MUST wait for `handler.start_up()` completion, then flush stale buffer before processing input (see "Headless Audio Lifecycle" pattern)
+- Greeting generation runs as background task - track `_greeting_task` for clean shutdown cancellation
 <!-- END AUTO-MANAGED -->
 
 <!-- MANUAL -->

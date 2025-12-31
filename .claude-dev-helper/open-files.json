@@ -1,35 +1,5 @@
 [
   {
-    "filePath": "/Users/jasonschulz/Developer/robotics/reachy/src/reachy_mini_conversation_app/local_qwen_s2s.py",
-    "timestamp": 1767193378647,
-    "focus": false,
-    "openLocation": 0
-  },
-  {
-    "filePath": "/Users/jasonschulz/Developer/robotics/reachy/src/reachy_mini_conversation_app/config.py",
-    "timestamp": 1767193905615,
-    "focus": false,
-    "openLocation": 0
-  },
-  {
-    "filePath": "/Users/jasonschulz/Developer/robotics/reachy/src/reachy_mini_conversation_app/local_qwen_s2s.py",
-    "timestamp": 1767193915101,
-    "focus": false,
-    "openLocation": 0
-  },
-  {
-    "filePath": "/Users/jasonschulz/Developer/robotics/reachy/src/reachy_mini_conversation_app/local_qwen_s2s.py",
-    "timestamp": 1767193938488,
-    "focus": false,
-    "openLocation": 0
-  },
-  {
-    "filePath": "/Users/jasonschulz/Developer/robotics/reachy/src/reachy_mini_conversation_app/console.py",
-    "timestamp": 1767194673009,
-    "focus": false,
-    "openLocation": 0
-  },
-  {
     "filePath": "/Users/jasonschulz/Developer/robotics/reachy/whats-next.md",
     "timestamp": 1767195311320,
     "focus": false,
@@ -56,6 +26,36 @@
   {
     "filePath": "/Users/jasonschulz/Developer/robotics/reachy/whats-next.md",
     "timestamp": 1767205149444,
+    "focus": false,
+    "openLocation": 0
+  },
+  {
+    "filePath": "/Users/jasonschulz/Developer/robotics/reachy/CLAUDE.md",
+    "timestamp": 1767205292755,
+    "focus": false,
+    "openLocation": 0
+  },
+  {
+    "filePath": "/Users/jasonschulz/Developer/robotics/reachy/CLAUDE.md",
+    "timestamp": 1767205313038,
+    "focus": false,
+    "openLocation": 0
+  },
+  {
+    "filePath": "/Users/jasonschulz/Developer/robotics/reachy/CLAUDE.md",
+    "timestamp": 1767205326128,
+    "focus": false,
+    "openLocation": 0
+  },
+  {
+    "filePath": "/Users/jasonschulz/Developer/robotics/reachy/CLAUDE.md",
+    "timestamp": 1767205338374,
+    "focus": false,
+    "openLocation": 0
+  },
+  {
+    "filePath": "/Users/jasonschulz/Developer/robotics/reachy/.claude/auto-memory/dirty-files",
+    "timestamp": 1767205342458,
     "focus": false,
     "openLocation": 0
   }
