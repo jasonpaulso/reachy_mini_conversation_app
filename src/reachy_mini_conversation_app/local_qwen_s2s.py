@@ -16,6 +16,7 @@ from fastrtc import AdditionalOutputs, AsyncStreamHandler, wait_for_item, audio_
 from numpy.typing import NDArray
 from scipy.signal import resample
 
+from reachy_mini_conversation_app.config import config
 from reachy_mini_conversation_app.prompts import get_session_instructions
 from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
 
@@ -68,8 +69,8 @@ class LocalQwenS2SHandler(AsyncStreamHandler):
         self._silence_frames = 0
         self._speech_frames = 0
 
-        # VAD parameters
-        self._vad_threshold = 0.02  # RMS threshold for speech detection
+        # VAD parameters (configurable via LOCAL_S2S_VAD_THRESHOLD env var)
+        self._vad_threshold = config.LOCAL_S2S_VAD_THRESHOLD
         self._silence_threshold_frames = 30  # ~1.25s of silence to end utterance
         self._min_speech_frames = 5  # Minimum frames to consider valid speech
 
@@ -83,6 +84,8 @@ class LocalQwenS2SHandler(AsyncStreamHandler):
         self._shutdown_requested = False
         self.last_activity_time = asyncio.get_event_loop().time()
         self.start_time = asyncio.get_event_loop().time()
+        self._greeting_task: Optional[asyncio.Task[None]] = None
+        self._utterance_task: Optional[asyncio.Task[None]] = None
 
     def copy(self) -> "LocalQwenS2SHandler":
         """Create a copy of the handler."""
@@ -151,6 +154,7 @@ class LocalQwenS2SHandler(AsyncStreamHandler):
 
             logger.info("Qwen3-Omni model loaded successfully")
             logger.info("Using speaker: %s", self.speaker)
+            logger.info("VAD threshold: %.4f (adjust via LOCAL_S2S_VAD_THRESHOLD)", self._vad_threshold)
 
             # Initialize conversation with system prompt
             system_instructions = get_session_instructions()
@@ -159,8 +163,17 @@ class LocalQwenS2SHandler(AsyncStreamHandler):
             # Warm up the model to JIT compile for fast first response
             await self._warm_up_model()
 
-            # Generate a greeting to the user (like OpenAI Realtime does on session start)
-            await self.generate_greeting()
+            logger.info("Local S2S handler ready - listening for speech...")
+
+            # Generate greeting as background task (like OpenAI Realtime, which generates
+            # greeting AFTER connection is established). This allows emit() to start
+            # consuming audio immediately rather than waiting for greeting to complete.
+            # Track the task so we can cancel it on shutdown.
+            # Skip greeting if configured (useful for Gradio mode where timing is sensitive)
+            if config.LOCAL_S2S_SKIP_GREETING:
+                logger.info("Greeting skipped (LOCAL_S2S_SKIP_GREETING=true)")
+            else:
+                self._greeting_task = asyncio.create_task(self.generate_greeting())
 
         except Exception as e:
             logger.error("Failed to load Qwen3-Omni model: %s", e)
@@ -319,9 +332,40 @@ class LocalQwenS2SHandler(AsyncStreamHandler):
 
         input_sample_rate, audio_frame = frame
 
-        # Log sample rate once
+        # Discard stale audio buffers accumulated during model loading.
+        # The robot's audio backend pre-allocates large buffers that contain zeros
+        # until consumed in real-time. We discard frames until we see non-zero audio
+        # OR until we've discarded enough frames (to handle quiet environments).
+        if not hasattr(self, "_audio_warmup_complete"):
+            self._audio_warmup_frames = getattr(self, "_audio_warmup_frames", 0) + 1
+            frame_samples = audio_frame.size if audio_frame.ndim == 1 else audio_frame.shape[0]
+            has_audio = np.count_nonzero(audio_frame) > frame_samples * 0.01  # >1% nonzero
+
+            # Discard first 50 frames (~2 seconds) OR until we see real audio
+            if self._audio_warmup_frames < 50 and not has_audio:
+                if self._audio_warmup_frames == 1:
+                    logger.info("Discarding stale audio buffer (accumulated during model load)...")
+                return
+
+            # Warmup complete - either we have real audio or enough time passed
+            self._audio_warmup_complete = True
+            if has_audio:
+                logger.info("Audio warmup complete - detected real audio after %d frames", self._audio_warmup_frames)
+            else:
+                logger.info("Audio warmup complete - timeout after %d frames (no audio detected)", self._audio_warmup_frames)
+
+        # Log sample rate and audio info once (after warmup)
         if not hasattr(self, "_input_sr_logged"):
             logger.info("Microphone sample rate: %d Hz (will resample to %d Hz)", input_sample_rate, INPUT_SAMPLE_RATE)
+            logger.info(
+                "First audio frame: shape=%s, dtype=%s, min=%s, max=%s, nonzero=%d/%d",
+                audio_frame.shape,
+                audio_frame.dtype,
+                audio_frame.min(),
+                audio_frame.max(),
+                np.count_nonzero(audio_frame),
+                len(audio_frame),
+            )
             self._input_sr_logged = True
 
         # Reshape if needed
@@ -380,9 +424,10 @@ class LocalQwenS2SHandler(AsyncStreamHandler):
                     logger.debug("Speech ended, processing utterance")
 
                     # Process in background to not block audio collection
+                    # Track task for cancellation on shutdown
                     audio_data = np.concatenate(self._audio_buffer)
                     self._audio_buffer = []
-                    asyncio.create_task(self._process_utterance(audio_data))
+                    self._utterance_task = asyncio.create_task(self._process_utterance(audio_data))
 
     async def _process_utterance(self, audio_data: NDArray[np.int16]) -> None:
         """Process a complete utterance through Qwen3-Omni with streaming.
@@ -568,8 +613,21 @@ class LocalQwenS2SHandler(AsyncStreamHandler):
         # Use wait_for_item like OpenAI handler - returns None on timeout
         result: Tuple[int, NDArray[np.int16]] | AdditionalOutputs | None = await wait_for_item(self.output_queue)
 
-        # Debug logging for audio emission (only log periodically to avoid spam)
+        # Debug: track audio chunks emitted
+        if not hasattr(self, "_emit_audio_count"):
+            self._emit_audio_count = 0
+
+        # Debug logging for audio emission
         if result is not None and isinstance(result, tuple):
+            self._emit_audio_count += 1
+            sr, audio = result
+            # Log first few chunks and periodically after
+            if self._emit_audio_count <= 3 or self._emit_audio_count % 50 == 0:
+                logger.info(
+                    "emit(): audio chunk #%d, sr=%d, shape=%s, dtype=%s, queue=%d",
+                    self._emit_audio_count, sr, audio.shape, audio.dtype, self.output_queue.qsize()
+                )
+
             qsize = self.output_queue.qsize()
             if qsize > 10 or qsize == 0:  # Log when queue is filling up or empty
                 logger.debug("emit(): audio chunk, queue_size=%d", qsize)
@@ -578,7 +636,16 @@ class LocalQwenS2SHandler(AsyncStreamHandler):
 
     def shutdown(self) -> None:
         """Shutdown the handler (sync to match base class signature)."""
+        logger.info("LocalQwenS2SHandler shutdown requested")
         self._shutdown_requested = True
+
+        # Cancel any running background tasks
+        if self._greeting_task is not None and not self._greeting_task.done():
+            self._greeting_task.cancel()
+            logger.debug("Cancelled greeting task")
+        if self._utterance_task is not None and not self._utterance_task.done():
+            self._utterance_task.cancel()
+            logger.debug("Cancelled utterance task")
 
         # Clear buffers
         self._audio_buffer = []

@@ -9,25 +9,25 @@ single password field to set ``OPENAI_API_KEY``. Once set, we persist it to the
 app instance's ``.env`` file (if available) and proceed to start streaming.
 """
 
-import asyncio
-import logging
 import os
 import sys
 import time
+import asyncio
+import logging
+from typing import TYPE_CHECKING, Any, List, Union, Optional
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, List, Optional, Union
 
 import numpy as np
-from fastrtc import AdditionalOutputs, audio_to_float32, audio_to_int16
+from fastrtc import AdditionalOutputs, audio_to_int16, audio_to_float32
 from numpy.typing import NDArray
-from reachy_mini import ReachyMini
-from reachy_mini.media.media_manager import MediaBackend
 from scipy.signal import resample
 
+from reachy_mini import ReachyMini
+from reachy_mini.media.media_manager import MediaBackend
 from reachy_mini_conversation_app.config import config
-from reachy_mini_conversation_app.headless_personality_ui import \
-    mount_personality_routes
 from reachy_mini_conversation_app.openai_realtime import OpenaiRealtimeHandler
+from reachy_mini_conversation_app.headless_personality_ui import mount_personality_routes
+
 
 if TYPE_CHECKING:
     from fastapi import FastAPI as FastAPIType
@@ -43,8 +43,8 @@ if config.LOCAL_S2S_ENABLED:
 # Runtime imports for FastAPI - these may not be available in all environments
 try:
     from fastapi import FastAPI, Response
-    from fastapi.responses import FileResponse, JSONResponse
     from pydantic import BaseModel
+    from fastapi.responses import FileResponse, JSONResponse
     from starlette.staticfiles import StaticFiles
 
     _FASTAPI_AVAILABLE = True
@@ -254,9 +254,9 @@ class LocalStream:
 
         # Re-import locally to narrow types (imports guarded by _FASTAPI_AVAILABLE check above)
         from fastapi import Response as _Response
+        from pydantic import BaseModel as _BaseModel
         from fastapi.responses import FileResponse as _FileResponse
         from fastapi.responses import JSONResponse as _JSONResponse
-        from pydantic import BaseModel as _BaseModel
         from starlette.staticfiles import StaticFiles as _StaticFiles
 
         if hasattr(self._settings_app, "mount"):
@@ -347,8 +347,7 @@ class LocalStream:
             try:
                 from dotenv import load_dotenv
 
-                from reachy_mini_conversation_app.config import \
-                    set_custom_profile
+                from reachy_mini_conversation_app.config import set_custom_profile
 
                 env_path = Path(self._instance_path) / ".env"
                 if env_path.exists():
@@ -496,15 +495,103 @@ class LocalStream:
         input_sample_rate = self._robot.media.get_input_audio_samplerate()
         logger.debug(f"Audio recording started at {input_sample_rate} Hz")
 
+        # Debug: log sounddevice configuration and test direct capture
+        try:
+            import sounddevice as sd
+            devices = sd.query_devices()
+            default_input = sd.query_devices(kind="input")
+            logger.info(f"SoundDevice default input: {default_input.get('name', 'unknown')}, "
+                        f"channels={default_input.get('max_input_channels', 0)}, "
+                        f"sample_rate={default_input.get('default_samplerate', 0)}")
+            # Log all input devices for debugging
+            for i, dev in enumerate(devices):
+                if dev.get("max_input_channels", 0) > 0:
+                    logger.debug(f"  Input device {i}: {dev.get('name')} (channels={dev.get('max_input_channels')})")
+
+            # Test direct SoundDevice capture (bypassing robot SDK)
+            test_duration = 0.5  # 500ms test
+            test_sr = int(default_input.get("default_samplerate", 16000))
+            test_channels = min(1, int(default_input.get("max_input_channels", 1)))
+            try:
+                test_audio = sd.rec(int(test_duration * test_sr), samplerate=test_sr, channels=test_channels, blocking=True)
+                test_nonzero = np.count_nonzero(test_audio)
+                test_rms = np.sqrt(np.mean(test_audio**2))
+                if test_nonzero > 0:
+                    logger.info(f"Direct SoundDevice test: PASSED (nonzero={test_nonzero}, rms={test_rms:.4f})")
+                else:
+                    logger.warning("Direct SoundDevice test: FAILED - all zeros (microphone issue?)")
+            except Exception as e:
+                logger.warning(f"Direct SoundDevice test failed: {e}")
+        except Exception as e:
+            logger.debug(f"Could not query sounddevice: {e}")
+
+        # Debug: log audio sample info once and write debug WAV
+        _logged_audio_info = False
+        _debug_samples_collected: List[NDArray[np.int16]] = []
+        _debug_sample_count = 0
+        _debug_wav_written = False
+
         while not self._stop_event.is_set():
             audio_sample = self._robot.media.get_audio_sample()
             if audio_sample is not None:
+                # Debug: comprehensive logging of raw audio BEFORE any conversion
+                if not _logged_audio_info:
+                    sample_type = type(audio_sample).__name__
+                    if hasattr(audio_sample, "shape"):
+                        raw_arr = audio_sample
+                        logger.info(
+                            f"Raw audio: type={sample_type}, shape={raw_arr.shape}, dtype={raw_arr.dtype}, "
+                            f"min={raw_arr.min():.6f}, max={raw_arr.max():.6f}, "
+                            f"nonzero={np.count_nonzero(raw_arr)}/{raw_arr.size}"
+                        )
+                        # Check if it looks like float32 in [-1, 1] range
+                        if raw_arr.dtype == np.float32:
+                            logger.info("Audio is float32 - will use audio_to_int16() for conversion")
+                        elif raw_arr.dtype == np.int16:
+                            logger.info("Audio is already int16")
+                        else:
+                            logger.warning(f"Unexpected audio dtype: {raw_arr.dtype}")
+                    elif isinstance(audio_sample, (bytes, bytearray, memoryview)):
+                        raw_bytes = bytes(audio_sample)
+                        logger.info(f"Raw audio: type={sample_type}, len={len(raw_bytes)} bytes")
+                        # Log first 32 bytes as hex to inspect
+                        logger.info(f"First 32 bytes (hex): {raw_bytes[:32].hex()}")
+                        # Try interpreting as both int16 and float32
+                        try:
+                            as_int16 = np.frombuffer(raw_bytes[:64], dtype=np.int16)
+                            as_float32 = np.frombuffer(raw_bytes[:64], dtype=np.float32)
+                            logger.info(f"As int16: min={as_int16.min()}, max={as_int16.max()}, nonzero={np.count_nonzero(as_int16)}")
+                            logger.info(f"As float32: min={as_float32.min():.6f}, max={as_float32.max():.6f}")
+                        except Exception as e:
+                            logger.warning(f"Could not interpret raw bytes: {e}")
+                    else:
+                        logger.info(f"Audio sample: type={sample_type}")
+                    _logged_audio_info = True
+
                 # Convert to int16 for handler (handles bytes or float32 input)
                 if isinstance(audio_sample, (bytes, bytearray, memoryview)):
                     # Bytes-like -> interpret as int16 PCM
                     audio_frame = np.frombuffer(audio_sample, dtype=np.int16)
                 else:
                     audio_frame = audio_to_int16(audio_sample)
+
+                # Collect samples for debug WAV (first ~2 seconds)
+                _debug_sample_count += 1
+                if not _debug_wav_written and len(_debug_samples_collected) < 100:
+                    _debug_samples_collected.append(audio_frame.copy())
+                elif not _debug_wav_written and len(_debug_samples_collected) >= 100:
+                    # Write debug WAV file
+                    try:
+                        import soundfile as sf
+                        debug_audio = np.concatenate(_debug_samples_collected)
+                        debug_path = "/tmp/reachy_mic_debug.wav"
+                        sf.write(debug_path, debug_audio, input_sample_rate)
+                        logger.info(f"Debug mic audio saved to {debug_path} ({len(debug_audio)} samples, {len(debug_audio)/input_sample_rate:.2f}s)")
+                    except Exception as e:
+                        logger.warning(f"Could not write debug WAV: {e}")
+                    _debug_wav_written = True
+                    _debug_samples_collected = []  # Free memory
+
                 await self.handler.receive((input_sample_rate, audio_frame))
             await asyncio.sleep(0)  # avoid busy loop
 

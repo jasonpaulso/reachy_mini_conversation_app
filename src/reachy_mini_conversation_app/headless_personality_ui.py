@@ -50,7 +50,7 @@ def mount_personality_routes(
         name: str
         instructions: str
         tools_text: str
-        voice: Optional[str] = "cedar"
+        voice: Optional[str] = "Aiden"
 
     class ApplyPayload(BaseModel):
         name: str
@@ -86,7 +86,7 @@ def mount_personality_routes(
     def _load(name: str) -> dict:  # type: ignore
         instr = read_instructions_for(name)
         tools_txt = ""
-        voice = "cedar"
+        voice = "Aiden"
         if name != DEFAULT_OPTION:
             pdir = resolve_profile_dir(name)
             tp = pdir / "tools.txt"
@@ -95,7 +95,7 @@ def mount_personality_routes(
             vf = pdir / "voice.txt"
             if vf.exists():
                 v = vf.read_text(encoding="utf-8").strip()
-                voice = v or "cedar"
+                voice = v or "Aiden"
         avail = available_tools_for(name)
         enabled = [ln.strip() for ln in tools_txt.splitlines() if ln.strip() and not ln.strip().startswith("#")]
         return {
@@ -116,7 +116,7 @@ def mount_personality_routes(
         name = str(raw.get("name", ""))
         instructions = str(raw.get("instructions", ""))
         tools_text = str(raw.get("tools_text", ""))
-        voice = str(raw.get("voice", "cedar")) if raw.get("voice") is not None else "cedar"
+        voice = str(raw.get("voice", "Aiden")) if raw.get("voice") is not None else "Aiden"
 
         name_s = _sanitize_name(name)
         if not name_s:
@@ -129,7 +129,7 @@ def mount_personality_routes(
                 len(instructions),
                 len(tools_text),
             )
-            _write_profile(name_s, instructions, tools_text, voice or "cedar")
+            _write_profile(name_s, instructions, tools_text, voice or "Aiden")
             value = f"user_personalities/{name_s}"
             choices = [DEFAULT_OPTION, *list_personalities()]
             return {"ok": True, "value": value, "choices": choices}
@@ -169,7 +169,7 @@ def mount_personality_routes(
             return JSONResponse({"ok": False, "error": "invalid_name"}, status_code=400)  # type: ignore
         instr = str(data.get("instructions") or "")
         tools = str(data.get("tools_text") or "")
-        v = str(data.get("voice") or "cedar")
+        v = str(data.get("voice") or "Aiden")
         try:
             logger.info(
                 "Headless save_raw: name=%r voice=%r instr_len=%d tools_len=%d", name_s, v, len(instr), len(tools)
@@ -182,7 +182,7 @@ def mount_personality_routes(
             return JSONResponse({"ok": False, "error": str(e)}, status_code=500)  # type: ignore
 
     @app.get("/personalities/save_raw")
-    async def _save_raw_get(name: str, instructions: str = "", tools_text: str = "", voice: str = "cedar") -> dict:  # type: ignore
+    async def _save_raw_get(name: str, instructions: str = "", tools_text: str = "", voice: str = "Aiden") -> dict:  # type: ignore
         name_s = _sanitize_name(name)
         if not name_s:
             return JSONResponse({"ok": False, "error": "invalid_name"}, status_code=400)  # type: ignore
@@ -194,7 +194,7 @@ def mount_personality_routes(
                 len(instructions),
                 len(tools_text),
             )
-            _write_profile(name_s, instructions, tools_text, voice or "cedar")
+            _write_profile(name_s, instructions, tools_text, voice or "Aiden")
             value = f"user_personalities/{name_s}"
             choices = [DEFAULT_OPTION, *list_personalities()]
             return {"ok": True, "value": value, "choices": choices}
@@ -265,16 +265,16 @@ def mount_personality_routes(
     async def _voices() -> list[str]:
         loop = get_loop()
         if loop is None:
-            return ["cedar"]
+            return ["Aiden"]
 
         async def _get_v() -> list[str]:
             try:
                 return await handler.get_available_voices()
             except Exception:
-                return ["cedar"]
+                return ["Aiden"]
 
         try:
             fut = asyncio.run_coroutine_threadsafe(_get_v(), loop)
             return fut.result(timeout=10)
         except Exception:
-            return ["cedar"]
+            return ["Aiden"]

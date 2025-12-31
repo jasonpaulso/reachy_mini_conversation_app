@@ -107,11 +107,15 @@ async function savePersonality(payload) {
   // Try JSON POST first
   const saveUrl = new URL("/personalities/save", window.location.origin);
   saveUrl.searchParams.set("_", Date.now().toString());
-  let resp = await fetchWithTimeout(saveUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  }, 5000);
+  let resp = await fetchWithTimeout(
+    saveUrl,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+    5000
+  );
   if (resp.ok) return await resp.json();
 
   // Fallback to form-encoded POST
@@ -120,14 +124,18 @@ async function savePersonality(payload) {
     form.set("name", payload.name || "");
     form.set("instructions", payload.instructions || "");
     form.set("tools_text", payload.tools_text || "");
-    form.set("voice", payload.voice || "cedar");
+    form.set("voice", payload.voice || "Aiden");
     const url = new URL("/personalities/save_raw", window.location.origin);
     url.searchParams.set("_", Date.now().toString());
-    resp = await fetchWithTimeout(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: form.toString(),
-    }, 5000);
+    resp = await fetchWithTimeout(
+      url,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: form.toString(),
+      },
+      5000
+    );
     if (resp.ok) return await resp.json();
   } catch {}
 
@@ -137,7 +145,7 @@ async function savePersonality(payload) {
     url.searchParams.set("name", payload.name || "");
     url.searchParams.set("instructions", payload.instructions || "");
     url.searchParams.set("tools_text", payload.tools_text || "");
-    url.searchParams.set("voice", payload.voice || "cedar");
+    url.searchParams.set("voice", payload.voice || "Aiden");
     url.searchParams.set("_", Date.now().toString());
     resp = await fetchWithTimeout(url, { method: "GET" }, 5000);
     if (resp.ok) return await resp.json();
@@ -171,7 +179,7 @@ async function getVoices() {
     if (!resp.ok) throw new Error("voices_failed");
     return await resp.json();
   } catch (e) {
-    return ["cedar"];
+    return ["Aiden"];
   }
 }
 
@@ -249,7 +257,8 @@ async function init() {
       // First validate the key
       const validation = await validateKey(key);
       if (!validation.valid) {
-        statusEl.textContent = "Invalid API key. Please check your key and try again.";
+        statusEl.textContent =
+          "Invalid API key. Please check your key and try again.";
         statusEl.className = "status error";
         input.classList.add("error");
         return;
@@ -265,7 +274,8 @@ async function init() {
     } catch (e) {
       input.classList.add("error");
       if (e.message === "invalid_api_key") {
-        statusEl.textContent = "Invalid API key. Please check your key and try again.";
+        statusEl.textContent =
+          "Invalid API key. Please check your key and try again.";
       } else {
         statusEl.textContent = "Failed to validate/save key. Please try again.";
       }
@@ -285,7 +295,8 @@ async function init() {
   statusEl.textContent = "";
   show(formPanel, false);
   if (!list.choices.length) {
-    statusEl.textContent = "Personality endpoints not ready yet. Retry shortly.";
+    statusEl.textContent =
+      "Personality endpoints not ready yet. Retry shortly.";
     statusEl.className = "status warn";
     show(loading, false);
     return;
@@ -295,11 +306,16 @@ async function init() {
   try {
     const choices = Array.isArray(list.choices) ? list.choices : [];
     const DEFAULT_OPTION = choices[0] || "(built-in default)";
-    const startupChoice = choices.includes(list.startup) ? list.startup : DEFAULT_OPTION;
-    const currentChoice = choices.includes(list.current) ? list.current : startupChoice;
+    const startupChoice = choices.includes(list.startup)
+      ? list.startup
+      : DEFAULT_OPTION;
+    const currentChoice = choices.includes(list.current)
+      ? list.current
+      : startupChoice;
 
     function setStartupLabel(name) {
-      const display = name && name !== DEFAULT_OPTION ? name : "Built-in default";
+      const display =
+        name && name !== DEFAULT_OPTION ? name : "Built-in default";
       pStartupLabel.textContent = `Launch on start: ${display}`;
     }
 
@@ -312,7 +328,9 @@ async function init() {
       pSelect.appendChild(opt);
     }
     if (choices.length) {
-      const preferred = choices.includes(startupChoice) ? startupChoice : currentChoice;
+      const preferred = choices.includes(startupChoice)
+        ? startupChoice
+        : currentChoice;
       pSelect.value = preferred;
     }
     const voices = await getVoices();
@@ -366,13 +384,16 @@ async function init() {
         .split("\n")
         .filter((ln) => ln.trim().startsWith("#"));
       const body = selected.join("\n");
-      pTools.value = (comments.join("\n") + (comments.length ? "\n" : "") + body).trim() + "\n";
+      pTools.value =
+        (comments.join("\n") + (comments.length ? "\n" : "") + body).trim() +
+        "\n";
     }
 
     function attachToolHandlers() {
       pAvail.addEventListener("change", (ev) => {
         const target = ev.target;
-        if (!(target instanceof HTMLInputElement) || target.type !== "checkbox") return;
+        if (!(target instanceof HTMLInputElement) || target.type !== "checkbox")
+          return;
         const name = target.value;
         // If a main tool toggled, propagate to deps
         if (AUTO_WITH[name]) {
@@ -390,7 +411,7 @@ async function init() {
       const data = await loadPersonality(selected);
       pInstr.value = data.instructions || "";
       pTools.value = data.tools_text || "";
-      pVoice.value = data.voice || "cedar";
+      pVoice.value = data.voice || "Aiden";
       // Available tools as checkboxes
       renderToolCheckboxes(data.available_tools, data.enabled_tools);
       attachToolHandlers();
@@ -416,7 +437,9 @@ async function init() {
         pStatus.textContent = res.status || "Applied.";
         pStatus.className = "status ok";
       } catch (e) {
-        pStatus.textContent = `Failed to apply${e.message ? ": " + e.message : ""}`;
+        pStatus.textContent = `Failed to apply${
+          e.message ? ": " + e.message : ""
+        }`;
         pStatus.className = "status error";
       }
     });
@@ -430,20 +453,23 @@ async function init() {
         pStatus.textContent = res.status || "Saved for startup.";
         pStatus.className = "status ok";
       } catch (e) {
-        pStatus.textContent = `Failed to persist${e.message ? ": " + e.message : ""}`;
+        pStatus.textContent = `Failed to persist${
+          e.message ? ": " + e.message : ""
+        }`;
         pStatus.className = "status error";
       }
     });
 
     pNew.addEventListener("click", () => {
       pName.value = "";
-      pInstr.value = "# Write your instructions here\n# e.g., Keep responses concise and friendly.";
+      pInstr.value =
+        "# Write your instructions here\n# e.g., Keep responses concise and friendly.";
       pTools.value = "# tools enabled for this profile\n";
       // Keep available tools list, clear selection
       pAvail.querySelectorAll('input[type="checkbox"]').forEach((el) => {
         el.checked = false;
       });
-      pVoice.value = "cedar";
+      pVoice.value = "Aiden";
       pStatus.textContent = "Fill fields and click Save.";
       pStatus.className = "status";
     });
@@ -464,7 +490,7 @@ async function init() {
           name,
           instructions: pInstr.value || "",
           tools_text: pTools.value || "",
-          voice: pVoice.value || "cedar",
+          voice: pVoice.value || "Aiden",
         });
         // Refresh select choices
         pSelect.innerHTML = "";
@@ -478,7 +504,9 @@ async function init() {
         pStatus.textContent = "Saved.";
         pStatus.className = "status ok";
         // Auto-apply
-        try { await applyPersonality(pSelect.value); } catch {}
+        try {
+          await applyPersonality(pSelect.value);
+        } catch {}
       } catch (e) {
         pStatus.textContent = "Failed to save.";
         pStatus.className = "status error";

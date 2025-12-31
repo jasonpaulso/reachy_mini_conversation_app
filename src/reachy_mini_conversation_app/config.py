@@ -27,6 +27,8 @@ class Config:
     LOCAL_S2S_ENABLED = os.getenv("LOCAL_S2S_ENABLED", "false").lower() in ("true", "1", "yes")
     LOCAL_S2S_MODEL = os.getenv("LOCAL_S2S_MODEL", "mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit")
     LOCAL_S2S_SPEAKER = os.getenv("LOCAL_S2S_SPEAKER", "Ethan")  # Ethan, Chelsie, or Aiden
+    LOCAL_S2S_VAD_THRESHOLD = float(os.getenv("LOCAL_S2S_VAD_THRESHOLD", "0.02"))  # RMS threshold for speech detection
+    LOCAL_S2S_SKIP_GREETING = os.getenv("LOCAL_S2S_SKIP_GREETING", "false").lower() in ("true", "1", "yes")  # Skip greeting generation
 
     # Optional
     MODEL_NAME = os.getenv("MODEL_NAME", "gpt-realtime")
