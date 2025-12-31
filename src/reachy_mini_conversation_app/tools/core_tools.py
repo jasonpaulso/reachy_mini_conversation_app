@@ -126,9 +126,12 @@ def _load_profile_tools() -> None:
         loaded = False
         profile_error = None
 
+        # Define module paths upfront to ensure they're always bound
+        profile_tool_module = f"{PROFILES_DIRECTORY}.{profile}.{tool_name}"
+        shared_tool_module = f"reachy_mini_conversation_app.tools.{tool_name}"
+
         # Try profile-local tool first
         try:
-            profile_tool_module = f"{PROFILES_DIRECTORY}.{profile}.{tool_name}"
             importlib.import_module(profile_tool_module)
             logger.info(f"✓ Loaded profile-local tool: {tool_name}")
             loaded = True
@@ -153,7 +156,6 @@ def _load_profile_tools() -> None:
         # Try shared tools library if not found in profile
         if not loaded:
             try:
-                shared_tool_module = f"reachy_mini_conversation_app.tools.{tool_name}"
                 importlib.import_module(shared_tool_module)
                 logger.info(f"✓ Loaded shared tool: {tool_name}")
                 loaded = True

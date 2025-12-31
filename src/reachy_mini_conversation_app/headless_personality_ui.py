@@ -9,7 +9,7 @@ callable to avoid cross-thread issues.
 from __future__ import annotations
 import asyncio
 import logging
-from typing import Any, Callable, Optional
+from typing import TYPE_CHECKING, Any, Union, Callable, Optional
 
 from fastapi import FastAPI
 
@@ -26,9 +26,13 @@ from .headless_personality import (
 )
 
 
+if TYPE_CHECKING:
+    from .local_qwen_s2s import LocalQwenS2SHandler
+
+
 def mount_personality_routes(
     app: FastAPI,
-    handler: OpenaiRealtimeHandler,
+    handler: "Union[OpenaiRealtimeHandler, LocalQwenS2SHandler]",
     get_loop: Callable[[], asyncio.AbstractEventLoop | None],
     *,
     persist_personality: Callable[[Optional[str]], None] | None = None,

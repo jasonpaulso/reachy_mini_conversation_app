@@ -9,36 +9,54 @@ single password field to set ``OPENAI_API_KEY``. Once set, we persist it to the
 app instance's ``.env`` file (if available) and proceed to start streaming.
 """
 
+import asyncio
+import logging
 import os
 import sys
 import time
-import asyncio
-import logging
-from typing import List, Optional
 from pathlib import Path
+from typing import TYPE_CHECKING, Any, List, Optional, Union
 
-from fastrtc import AdditionalOutputs, audio_to_float32
-from scipy.signal import resample
-
+import numpy as np
+from fastrtc import AdditionalOutputs, audio_to_float32, audio_to_int16
+from numpy.typing import NDArray
 from reachy_mini import ReachyMini
 from reachy_mini.media.media_manager import MediaBackend
+from scipy.signal import resample
+
 from reachy_mini_conversation_app.config import config
+from reachy_mini_conversation_app.headless_personality_ui import \
+    mount_personality_routes
 from reachy_mini_conversation_app.openai_realtime import OpenaiRealtimeHandler
-from reachy_mini_conversation_app.headless_personality_ui import mount_personality_routes
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI as FastAPIType
+
+    from reachy_mini_conversation_app.local_qwen_s2s import LocalQwenS2SHandler
 
 
+# Conditional import for local s2s
+if config.LOCAL_S2S_ENABLED:
+    from reachy_mini_conversation_app.local_qwen_s2s import LocalQwenS2SHandler
+
+
+# Runtime imports for FastAPI - these may not be available in all environments
 try:
-    # FastAPI is provided by the Reachy Mini Apps runtime
     from fastapi import FastAPI, Response
-    from pydantic import BaseModel
     from fastapi.responses import FileResponse, JSONResponse
+    from pydantic import BaseModel
     from starlette.staticfiles import StaticFiles
+
+    _FASTAPI_AVAILABLE = True
 except Exception:  # pragma: no cover - only loaded when settings_app is used
-    FastAPI = object  # type: ignore
-    FileResponse = object  # type: ignore
-    JSONResponse = object  # type: ignore
-    StaticFiles = object  # type: ignore
-    BaseModel = object  # type: ignore
+    # Fallback stubs when packages unavailable at runtime
+    FastAPI = None  # type: ignore[assignment,misc]
+    Response = None  # type: ignore[assignment,misc]
+    FileResponse = None  # type: ignore[assignment,misc]
+    JSONResponse = None  # type: ignore[assignment,misc]
+    StaticFiles = None  # type: ignore[assignment,misc]
+    BaseModel = None  # type: ignore[assignment,misc]
+    _FASTAPI_AVAILABLE = False
 
 
 logger = logging.getLogger(__name__)
@@ -49,14 +67,15 @@ class LocalStream:
 
     def __init__(
         self,
-        handler: OpenaiRealtimeHandler,
+        handler: "Union[OpenaiRealtimeHandler, LocalQwenS2SHandler]",
         robot: ReachyMini,
         *,
-        settings_app: Optional[FastAPI] = None,
+        settings_app: "Optional[FastAPIType]" = None,
         instance_path: Optional[str] = None,
     ):
-        """Initialize the stream with an OpenAI realtime handler and pipelines.
+        """Initialize the stream with a speech handler and media pipelines.
 
+        - ``handler``: Either OpenaiRealtimeHandler or LocalQwenS2SHandler.
         - ``settings_app``: the Reachy Mini Apps FastAPI to attach settings endpoints.
         - ``instance_path``: directory where per-instance ``.env`` should be stored.
         """
@@ -66,7 +85,7 @@ class LocalStream:
         self._tasks: List[asyncio.Task[None]] = []
         # Allow the handler to flush the player queue when appropriate.
         self.handler._clear_queue = self.clear_audio_queue
-        self._settings_app: Optional[FastAPI] = settings_app
+        self._settings_app: "Optional[FastAPIType]" = settings_app
         self._instance_path: Optional[str] = instance_path
         self._settings_initialized = False
         self._asyncio_loop = None
@@ -226,61 +245,73 @@ class LocalStream:
             return
         if self._settings_app is None:
             return
+        # Guard: FastAPI imports must be available to proceed
+        if not _FASTAPI_AVAILABLE:
+            return
 
         static_dir = Path(__file__).parent / "static"
         index_file = static_dir / "index.html"
 
+        # Re-import locally to narrow types (imports guarded by _FASTAPI_AVAILABLE check above)
+        from fastapi import Response as _Response
+        from fastapi.responses import FileResponse as _FileResponse
+        from fastapi.responses import JSONResponse as _JSONResponse
+        from pydantic import BaseModel as _BaseModel
+        from starlette.staticfiles import StaticFiles as _StaticFiles
+
         if hasattr(self._settings_app, "mount"):
             try:
                 # Serve /static/* assets
-                self._settings_app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+                self._settings_app.mount(
+                    "/static", _StaticFiles(directory=str(static_dir)), name="static"
+                )
             except Exception:
                 pass
 
-        class ApiKeyPayload(BaseModel):
+        class ApiKeyPayload(_BaseModel):
             openai_api_key: str
 
         # GET / -> index.html
         @self._settings_app.get("/")
-        def _root() -> FileResponse:
-            return FileResponse(str(index_file))
+        def _root() -> Any:
+            return _FileResponse(str(index_file))
 
         # GET /favicon.ico -> optional, avoid noisy 404s on some browsers
         @self._settings_app.get("/favicon.ico")
-        def _favicon() -> Response:
-            return Response(status_code=204)
+        def _favicon() -> Any:
+            return _Response(status_code=204)
 
         # GET /status -> whether key is set
         @self._settings_app.get("/status")
-        def _status() -> JSONResponse:
+        def _status() -> Any:
             has_key = bool(config.OPENAI_API_KEY and str(config.OPENAI_API_KEY).strip())
-            return JSONResponse({"has_key": has_key})
+            return _JSONResponse({"has_key": has_key})
 
         # GET /ready -> whether backend finished loading tools
         @self._settings_app.get("/ready")
-        def _ready() -> JSONResponse:
+        def _ready() -> Any:
             try:
                 mod = sys.modules.get("reachy_mini_conversation_app.tools.core_tools")
                 ready = bool(getattr(mod, "_TOOLS_INITIALIZED", False)) if mod else False
             except Exception:
                 ready = False
-            return JSONResponse({"ready": ready})
+            return _JSONResponse({"ready": ready})
 
         # POST /openai_api_key -> set/persist key
         @self._settings_app.post("/openai_api_key")
-        def _set_key(payload: ApiKeyPayload) -> JSONResponse:
+        def _set_key(payload: ApiKeyPayload) -> Any:
             key = (payload.openai_api_key or "").strip()
             if not key:
-                return JSONResponse({"ok": False, "error": "empty_key"}, status_code=400)
+                return _JSONResponse({"ok": False, "error": "empty_key"}, status_code=400)
             self._persist_api_key(key)
-            return JSONResponse({"ok": True})
+            return _JSONResponse({"ok": True})
 
         # POST /validate_api_key -> validate key without persisting it
         @self._settings_app.post("/validate_api_key")
-        async def _validate_key(payload: ApiKeyPayload) -> JSONResponse:
+        async def _validate_key(payload: ApiKeyPayload) -> Any:
             key = (payload.openai_api_key or "").strip()
             if not key:
-                return JSONResponse({"valid": False, "error": "empty_key"}, status_code=400)
+                return _JSONResponse({"valid": False, "error": "empty_key"}, status_code=400)
 
             # Try to validate by checking if we can fetch the models
             try:
@@ -290,16 +321,16 @@ class LocalStream:
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     response = await client.get("https://api.openai.com/v1/models", headers=headers)
                     if response.status_code == 200:
-                        return JSONResponse({"valid": True})
+                        return _JSONResponse({"valid": True})
                     elif response.status_code == 401:
-                        return JSONResponse({"valid": False, "error": "invalid_api_key"}, status_code=401)
+                        return _JSONResponse({"valid": False, "error": "invalid_api_key"}, status_code=401)
                     else:
-                        return JSONResponse(
+                        return _JSONResponse(
                             {"valid": False, "error": "validation_failed"}, status_code=response.status_code
                         )
             except Exception as e:
                 logger.warning(f"API key validation failed: {e}")
-                return JSONResponse({"valid": False, "error": "validation_error"}, status_code=500)
+                return _JSONResponse({"valid": False, "error": "validation_error"}, status_code=500)
 
         self._settings_initialized = True
 
@@ -316,7 +347,8 @@ class LocalStream:
             try:
                 from dotenv import load_dotenv
 
-                from reachy_mini_conversation_app.config import set_custom_profile
+                from reachy_mini_conversation_app.config import \
+                    set_custom_profile
 
                 env_path = Path(self._instance_path) / ".env"
                 if env_path.exists():
@@ -337,34 +369,39 @@ class LocalStream:
             except Exception:
                 pass
 
-        # If key is still missing, try to download one from HuggingFace
-        if not (config.OPENAI_API_KEY and str(config.OPENAI_API_KEY).strip()):
-            logger.info("OPENAI_API_KEY not set, attempting to download from HuggingFace...")
-            try:
-                from gradio_client import Client
-                client = Client("HuggingFaceM4/gradium_setup", verbose=False)
-                key, status = client.predict(api_name="/claim_b_key")
-                if key and key.strip():
-                    logger.info("Successfully downloaded API key from HuggingFace")
-                    # Persist it immediately
-                    self._persist_api_key(key)
-            except Exception as e:
-                logger.warning(f"Failed to download API key from HuggingFace: {e}")
+        # Skip API key handling for local S2S mode - it doesn't need OpenAI
+        if not config.LOCAL_S2S_ENABLED:
+            # If key is still missing, try to download one from HuggingFace
+            if not (config.OPENAI_API_KEY and str(config.OPENAI_API_KEY).strip()):
+                logger.info("OPENAI_API_KEY not set, attempting to download from HuggingFace...")
+                try:
+                    from gradio_client import Client
 
-        # Always expose settings UI if a settings app is available
-        # (do this AFTER loading/downloading the key so status endpoint sees the right value)
-        self._init_settings_ui_if_needed()
+                    client = Client("HuggingFaceM4/gradium_setup", verbose=False)
+                    key, status = client.predict(api_name="/claim_b_key")
+                    if key and key.strip():
+                        logger.info("Successfully downloaded API key from HuggingFace")
+                        # Persist it immediately
+                        self._persist_api_key(key)
+                except Exception as e:
+                    logger.warning(f"Failed to download API key from HuggingFace: {e}")
 
-        # If key is still missing -> wait until provided via the settings UI
-        if not (config.OPENAI_API_KEY and str(config.OPENAI_API_KEY).strip()):
-            logger.warning("OPENAI_API_KEY not found. Open the app settings page to enter it.")
-            # Poll until the key becomes available (set via the settings UI)
-            try:
-                while not (config.OPENAI_API_KEY and str(config.OPENAI_API_KEY).strip()):
-                    time.sleep(0.2)
-            except KeyboardInterrupt:
-                logger.info("Interrupted while waiting for API key.")
-                return
+            # Always expose settings UI if a settings app is available
+            # (do this AFTER loading/downloading the key so status endpoint sees the right value)
+            self._init_settings_ui_if_needed()
+
+            # If key is still missing -> wait until provided via the settings UI
+            if not (config.OPENAI_API_KEY and str(config.OPENAI_API_KEY).strip()):
+                logger.warning("OPENAI_API_KEY not found. Open the app settings page to enter it.")
+                # Poll until the key becomes available (set via the settings UI)
+                try:
+                    while not (config.OPENAI_API_KEY and str(config.OPENAI_API_KEY).strip()):
+                        time.sleep(0.2)
+                except KeyboardInterrupt:
+                    logger.info("Interrupted while waiting for API key.")
+                    return
+        else:
+            logger.info("Using local S2S mode - skipping OpenAI API key check")
 
         # Start media after key is set/available
         self._robot.media.start_recording()
@@ -398,7 +435,12 @@ class LocalStream:
                 logger.info("Tasks cancelled during shutdown")
             finally:
                 # Ensure handler connection is closed
-                await self.handler.shutdown()
+                try:
+                    shutdown_result = self.handler.shutdown()
+                    if asyncio.iscoroutine(shutdown_result):
+                        return shutdown_result
+                except Exception as e:
+                    logger.debug(f"Error during handler shutdown: {e}")
 
         asyncio.run(runner())
 
@@ -435,11 +477,18 @@ class LocalStream:
     def clear_audio_queue(self) -> None:
         """Flush the player's appsrc to drop any queued audio immediately."""
         logger.info("User intervention: flushing player queue")
-        if self._robot.media.backend == MediaBackend.GSTREAMER:
-            # Directly flush gstreamer audio pipe
-            self._robot.media.audio.clear_player()
-        elif self._robot.media.backend == MediaBackend.DEFAULT or self._robot.media.backend == MediaBackend.DEFAULT_NO_VIDEO:
-            self._robot.media.audio.clear_output_buffer()
+        audio = self._robot.media.audio
+        if audio is not None:
+            if self._robot.media.backend == MediaBackend.GSTREAMER:
+                # Directly flush gstreamer audio pipe
+                if hasattr(audio, "clear_player"):
+                    audio.clear_player()  # pyright: ignore[reportAttributeAccessIssue]
+            elif (
+                self._robot.media.backend == MediaBackend.DEFAULT
+                or self._robot.media.backend == MediaBackend.DEFAULT_NO_VIDEO
+            ):
+                if hasattr(audio, "clear_output_buffer"):
+                    audio.clear_output_buffer()  # pyright: ignore[reportAttributeAccessIssue]
         self.handler.output_queue = asyncio.Queue()
 
     async def record_loop(self) -> None:
@@ -448,8 +497,14 @@ class LocalStream:
         logger.debug(f"Audio recording started at {input_sample_rate} Hz")
 
         while not self._stop_event.is_set():
-            audio_frame = self._robot.media.get_audio_sample()
-            if audio_frame is not None:
+            audio_sample = self._robot.media.get_audio_sample()
+            if audio_sample is not None:
+                # Convert to int16 for handler (handles bytes or float32 input)
+                if isinstance(audio_sample, (bytes, bytearray, memoryview)):
+                    # Bytes-like -> interpret as int16 PCM
+                    audio_frame = np.frombuffer(audio_sample, dtype=np.int16)
+                else:
+                    audio_frame = audio_to_int16(audio_sample)
                 await self.handler.receive((input_sample_rate, audio_frame))
             await asyncio.sleep(0)  # avoid busy loop
 
@@ -482,18 +537,21 @@ class LocalStream:
                         audio_data = audio_data[:, 0]
 
                 # Cast if needed
-                audio_frame = audio_to_float32(audio_data)
+                audio_frame_f32: NDArray[np.float32] = audio_to_float32(audio_data)
 
                 # Resample if needed
                 if input_sample_rate != output_sample_rate:
-                    audio_frame = resample(
-                        audio_frame,
-                        int(len(audio_frame) * output_sample_rate / input_sample_rate),
+                    resampled = resample(
+                        audio_frame_f32,
+                        int(len(audio_frame_f32) * output_sample_rate / input_sample_rate),
                     )
+                    audio_frame_f32 = np.asarray(resampled, dtype=np.float32)
 
-                self._robot.media.push_audio_sample(audio_frame)
+                self._robot.media.push_audio_sample(audio_frame_f32)
 
             else:
                 logger.debug("Ignoring output type=%s", type(handler_output).__name__)
 
+            await asyncio.sleep(0)  # yield to event loop
+            await asyncio.sleep(0)  # yield to event loop
             await asyncio.sleep(0)  # yield to event loop

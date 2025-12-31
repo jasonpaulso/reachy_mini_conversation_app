@@ -1,0 +1,100 @@
+[
+    {
+        "code": {
+            "target": {
+                "$mid": 1,
+                "authority": "github.com",
+                "path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportOptionalCall.md",
+                "scheme": "https"
+            },
+            "value": "reportOptionalCall"
+        },
+        "endColumn": 14,
+        "endLineNumber": 203,
+        "message": "Object of type \"None\" cannot be called",
+        "modelVersionId": 11,
+        "origin": "extHost5",
+        "owner": "Pylance",
+        "resource": "/Users/jasonschulz/Developer/robotics/reachy/src/reachy_mini_conversation_app/local_qwen_s2s.py",
+        "severity": 8,
+        "source": "Pylance",
+        "startColumn": 22,
+        "startLineNumber": 198
+    },
+    {
+        "code": {
+            "target": {
+                "$mid": 1,
+                "authority": "github.com",
+                "path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportOptionalCall.md",
+                "scheme": "https"
+            },
+            "value": "reportOptionalCall"
+        },
+        "endColumn": 14,
+        "endLineNumber": 258,
+        "message": "Object of type \"None\" cannot be called",
+        "modelVersionId": 11,
+        "origin": "extHost5",
+        "owner": "Pylance",
+        "resource": "/Users/jasonschulz/Developer/robotics/reachy/src/reachy_mini_conversation_app/local_qwen_s2s.py",
+        "severity": 8,
+        "source": "Pylance",
+        "startColumn": 43,
+        "startLineNumber": 251
+    },
+    {
+        "code": {
+            "target": {
+                "$mid": 1,
+                "authority": "github.com",
+                "path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportOptionalCall.md",
+                "scheme": "https"
+            },
+            "value": "reportOptionalCall"
+        },
+        "endColumn": 14,
+        "endLineNumber": 472,
+        "message": "Object of type \"None\" cannot be called",
+        "modelVersionId": 11,
+        "origin": "extHost5",
+        "owner": "Pylance",
+        "resource": "/Users/jasonschulz/Developer/robotics/reachy/src/reachy_mini_conversation_app/local_qwen_s2s.py",
+        "severity": 8,
+        "source": "Pylance",
+        "startColumn": 43,
+        "startLineNumber": 465
+    },
+    {
+        "code": {
+            "target": {
+                "$mid": 1,
+                "authority": "github.com",
+                "path": "/microsoft/pylance-release/blob/main/docs/diagnostics/reportIncompatibleMethodOverride.md",
+                "scheme": "https"
+            },
+            "value": "reportIncompatibleMethodOverride"
+        },
+        "endColumn": 23,
+        "endLineNumber": 569,
+        "message": "Method \"shutdown\" overrides class \"StreamHandlerBase\" in an incompatible manner\n  Return type mismatch: base method returns type \"None\", override returns type \"CoroutineType[Any, Any, None]\"\n    \"CoroutineType[Any, Any, None]\" is not assignable to \"None\"",
+        "modelVersionId": 11,
+        "origin": "extHost5",
+        "owner": "Pylance",
+        "relatedInformation": [
+            {
+                "endColumn": 17,
+                "endLineNumber": 417,
+                "message": "Overridden method",
+                "resource": "/Users/jasonschulz/Developer/robotics/reachy/.venv/lib/python3.12/site-packages/fastrtc/tracks.py",
+                "startColumn": 9,
+                "startLineNumber": 417
+            }
+        ],
+        "resource": "/Users/jasonschulz/Developer/robotics/reachy/src/reachy_mini_conversation_app/local_qwen_s2s.py",
+        "severity": 8,
+        "source": "Pylance",
+        "startColumn": 15,
+        "startLineNumber": 569
+    }
+]

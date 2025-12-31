@@ -203,8 +203,12 @@ class CameraWorker:
                             t = min(1.0, elapsed_interpolation / self.interpolation_duration)
 
                             # Interpolate between current pose and neutral pose
+                            # Type guard: interpolation_start_pose is always set when interpolation_start_time is set
+                            if self.interpolation_start_pose is None:
+                                continue
+                            start_pose: NDArray[np.float64] = self.interpolation_start_pose.astype(np.float64)
                             interpolated_pose = linear_pose_interpolation(
-                                self.interpolation_start_pose,
+                                start_pose,
                                 neutral_pose,
                                 t,
                             )

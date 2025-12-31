@@ -125,12 +125,12 @@ class GotoQueueMove(Move):  # type: ignore
 
             # Use start pose if available, otherwise neutral
             if self.start_head_pose is not None:
-                start_pose = self.start_head_pose
+                start_pose = self.start_head_pose.astype(np.float64)
             else:
                 start_pose = create_head_pose(0, 0, 0, 0, 0, 0, degrees=True)
 
             # Interpolate head pose
-            head_pose = linear_pose_interpolation(start_pose, self.target_head_pose, t_clamped)
+            head_pose = linear_pose_interpolation(start_pose, self.target_head_pose.astype(np.float64), t_clamped)
 
             # Interpolate antennas - return as numpy array
             antennas = np.array(
