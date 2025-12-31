@@ -423,8 +423,31 @@ class LocalStream:
                     )
             except Exception:
                 pass
+
+            # CRITICAL: Wait for handler to initialize BEFORE starting audio loops
+            # This ensures model is loaded and ready before we start processing audio.
+            # Previously, all three tasks ran in parallel, causing record_loop to feed
+            # audio while handler was still loading the model (6+ seconds), resulting
+            # in stale buffer data and potential zero-audio issues.
+            logger.info("Starting handler initialization (model loading)...")
+            await self.handler.start_up()
+            logger.info("Handler ready - flushing stale audio buffer")
+
+            # Flush any audio that accumulated during model loading
+            # The recording started before model load, so buffer may contain
+            # 6+ seconds of stale audio frames that would cause issues
+            stale_audio = self._robot.media.get_audio_sample()
+            if stale_audio is not None:
+                stale_duration = len(stale_audio) / self._robot.media.get_input_audio_samplerate()
+                stale_nonzero = np.count_nonzero(stale_audio)
+                logger.info(
+                    f"Flushed {stale_duration:.2f}s of stale audio ({stale_nonzero}/{stale_audio.size} nonzero)"
+                )
+            else:
+                logger.debug("No stale audio to flush")
+
+            # Now start the audio processing loops
             self._tasks = [
-                asyncio.create_task(self.handler.start_up(), name="openai-handler"),
                 asyncio.create_task(self.record_loop(), name="stream-record-loop"),
                 asyncio.create_task(self.play_loop(), name="stream-play-loop"),
             ]
@@ -530,10 +553,49 @@ class LocalStream:
         _debug_samples_collected: List[NDArray[np.int16]] = []
         _debug_sample_count = 0
         _debug_wav_written = False
+        _consecutive_zero_samples = 0
+        _zero_audio_warned = False
 
         while not self._stop_event.is_set():
             audio_sample = self._robot.media.get_audio_sample()
             if audio_sample is not None:
+                # Early zero-audio detection - catch SDK issues quickly
+                if hasattr(audio_sample, "size"):
+                    nonzero_count = np.count_nonzero(audio_sample)
+                    if nonzero_count == 0:
+                        _consecutive_zero_samples += 1
+                        if _consecutive_zero_samples == 5:
+                            logger.warning(
+                                "AUDIO ISSUE: %d consecutive zero-audio samples detected! "
+                                "Attempting to restart audio recording stream...",
+                                _consecutive_zero_samples
+                            )
+                            # Try restarting the audio stream - it may have stalled
+                            try:
+                                self._robot.media.stop_recording()
+                                await asyncio.sleep(0.1)
+                                self._robot.media.start_recording()
+                                await asyncio.sleep(0.2)
+                                # Flush any stale data after restart
+                                _ = self._robot.media.get_audio_sample()
+                                logger.info("Audio stream restarted - continuing")
+                            except Exception as e:
+                                logger.error(f"Failed to restart audio stream: {e}")
+                        elif _consecutive_zero_samples >= 10 and not _zero_audio_warned:
+                            logger.error(
+                                "AUDIO ISSUE: %d consecutive zero-audio samples after restart! "
+                                "The robot SDK audio capture is not working. "
+                                "Check: (1) microphone device selection, (2) audio permissions, "
+                                "(3) sounddevice stream state. Direct SD test passed but SDK fails.",
+                                _consecutive_zero_samples
+                            )
+                            _zero_audio_warned = True
+                    else:
+                        if _consecutive_zero_samples > 0:
+                            logger.debug(f"Audio recovered after {_consecutive_zero_samples} zero samples")
+                        _consecutive_zero_samples = 0
+                        _zero_audio_warned = False
+
                 # Debug: comprehensive logging of raw audio BEFORE any conversion
                 if not _logged_audio_info:
                     sample_type = type(audio_sample).__name__

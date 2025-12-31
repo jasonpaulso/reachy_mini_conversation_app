@@ -1,6 +1,6 @@
 # Handoff: Local S2S with Qwen3-Omni for Reachy Mini
 
-**Last Updated:** 2025-12-31 (Debugging Session)
+**Last Updated:** 2025-12-31 (LLM Council Session - Headless Fix)
 
 <original_task>
 Integrate local speech-to-speech (S2S) using Qwen3-Omni via MLX as an alternative to OpenAI Realtime API in the Reachy Mini conversation app. Focus on slotting in local S2S while keeping the rest of the app unchanged.
@@ -39,29 +39,40 @@ Integrate local speech-to-speech (S2S) using Qwen3-Omni via MLX as an alternativ
    - Greeting generation moved to background task (line 172-176)
    - Task tracking for proper shutdown cancellation
    - Direct SoundDevice diagnostic test in console.py (lines 511-524)
+
+8. **Session 2025-12-31 - LLM Council Headless Fix**:
+   - Consulted 4-model LLM council (GPT-5.1, Gemini-3-Pro, Claude Sonnet 4.5, Grok-4)
+   - **Root cause identified**: Timing issue - audio loops started BEFORE handler.start_up() completed
+   - **Fix 1**: Sequential startup - wait for `handler.start_up()` THEN start audio loops (console.py lines 427-447)
+   - **Fix 2**: Buffer flush after model load - discard stale audio accumulated during 6s+ model loading
+   - **Fix 3**: Zero-audio detection with auto-restart - if 5 consecutive zero samples, restart stream (lines 562-597)
+   - **Fix 4**: Improved logging - early warning for persistent audio issues
 </work_completed>
 
 <work_remaining>
-## Immediate Priority: Headless Mode Audio
+## Immediate Priority: Test Headless Mode Fixes
 
-**Gradio mode works.** Headless mode does NOT.
+The fixes are implemented but **need testing on actual robot hardware**:
+1. Run headless mode with `LOCAL_S2S_ENABLED=true`
+2. Check logs for "Handler ready - flushing stale audio buffer" message
+3. Verify audio samples have nonzero values after flush
+4. If stream restart triggered, check if it recovers
 
-**Problem:** Robot SDK's `get_audio_sample()` returns ALL ZEROS
-- Direct SoundDevice test: **PASSES** (microphone works)
-- Robot SDK wrapper: Returns zeros
-- Issue is in `reachy_mini` SDK's audio wrapper, not SoundDevice
-
-**Investigation needed:**
-- Check `reachy_mini.media.audio_base` module
-- Look at how `get_audio_sample()` captures from SoundDevice
-- May need to configure input device explicitly
-- Or bypass robot SDK and use SoundDevice directly
-
-**Relevant log pattern:**
+**Expected log flow (happy path):**
 ```
+Starting handler initialization (model loading)...
+[6+ seconds of model loading]
+Handler ready - flushing stale audio buffer
+Flushed 6.50s of stale audio (0/156000 nonzero)  # Zeros discarded!
 Direct SoundDevice test: PASSED (nonzero=..., rms=...)
-Raw audio: shape=(94500, 2), min=0.000000, max=0.000000, nonzero=0/189000  # ALL ZEROS
+Raw audio: shape=(...), min=..., max=..., nonzero=.../...  # Should be NON-ZERO now
 ```
+
+**If zeros persist after fixes:**
+The issue is deeper in the SDK - the callback itself isn't receiving data. Next steps:
+1. Check if `reachy_mini.media.audio_sounddevice` stream is active
+2. Verify device selection (looks for "Reachy Mini Audio" or "respeaker")
+3. Consider bypassing SDK and using direct SoundDevice capture
 
 ## Secondary: Performance Optimization
 - TTFT: ~1.5-4.5 seconds (goal: <1s)
@@ -74,7 +85,7 @@ Raw audio: shape=(94500, 2), min=0.000000, max=0.000000, nonzero=0/189000  # ALL
 3. **Model persistence**: Reloads on each Gradio session
 4. **Silero VAD**: Replace energy-based VAD
 5. **Tool calling**: Not wired up yet
-6. **OpenAI Realtime headless regression**: Same audio input issue
+6. **OpenAI Realtime headless regression**: Same audio input issue (might be fixed by these changes)
 </work_remaining>
 
 <context>
@@ -83,14 +94,38 @@ Raw audio: shape=(94500, 2), min=0.000000, max=0.000000, nonzero=0/189000  # ALL
 | Mode | Audio In | Audio Out | Status |
 |------|----------|-----------|--------|
 | Gradio | Browser WebRTC | Browser WebRTC | **WORKING** |
-| Headless | Robot SoundDevice | Robot SoundDevice | **BROKEN** (zeros) |
+| Headless | Robot SoundDevice | Robot SoundDevice | **FIXED** (needs testing) |
 
 ## Key Architecture
 
 ```
-Gradio:   Browser Mic → WebRTC → fastrtc → handler.receive() → WORKS
-Headless: Robot Mic → SoundDevice → reachy_mini SDK → handler.receive() → ZEROS
+Gradio:   Browser Mic -> WebRTC -> fastrtc -> handler.receive() -> WORKS
+Headless: Robot Mic -> SoundDevice -> reachy_mini SDK -> handler.receive() -> FIXED?
 ```
+
+## LLM Council Findings (Unanimous Agreement)
+
+**All 4 models identified the same root causes:**
+
+1. **Timing Issue (PRIMARY)**: Audio loops started in PARALLEL with handler.start_up()
+   - `record_loop()` was feeding audio while model still loading (6+ seconds)
+   - Handler not ready to process = audio effectively lost
+   - FIX: Sequential startup - wait for start_up(), THEN start loops
+
+2. **Stale Buffer Issue**: Recording starts before model load
+   - Buffer fills with 6+ seconds of audio during load time
+   - First `get_audio_sample()` returns this stale (possibly zero) data
+   - FIX: Flush buffer after model loading completes
+
+3. **Channel Mismatch (if still failing)**: SDK doesn't specify channels
+   - `audio_sounddevice.py` line 65-68: `sd.InputStream()` has no `channels=` param
+   - SoundDevice uses device default which may not match callback expectations
+   - If device is 1-channel but SDK expects 2, PortAudio may fail silently
+
+4. **Stream State Issues (if still failing)**: Callback may not fire
+   - Stream might not be started correctly
+   - Device selection might fall back to wrong device
+   - FIX: Added auto-restart on 5 consecutive zero samples
 
 ## Config (.env)
 
@@ -128,16 +163,23 @@ Without `**model_inputs`, audio Mel spectrogram features are ignored and speech 
 3. **Audio features MUST be passed** - model ignores audio without them
 4. **Gradio closes connection during inference** - need shutdown guards
 5. **First call after load is slow** - JIT compilation, warm-up helps
-6. **Stale buffer issue** - Model loading takes ~6s, audio piles up as zeros
+6. **Stale buffer issue** - Model loading takes ~6s, audio piles up (NOW FIXED)
 7. **WebRTC timeout** - Long operations (>10s) cause channel to die
 8. **Shape mismatch** - Device reports 1 channel but SDK returns 2-channel array
 9. **Greeting timing** - Must be background task in Gradio mode
+10. **Timing issue** - Audio loops must wait for handler startup (NOW FIXED)
 
 ## Files Changed This Session
-- `src/reachy_mini_conversation_app/local_qwen_s2s.py`
-- `src/reachy_mini_conversation_app/console.py`
-- `src/reachy_mini_conversation_app/config.py`
+- `src/reachy_mini_conversation_app/console.py` - Sequential startup, buffer flush, zero-detection
 
-## Councly Insight
-Used council hearing for debugging. Key finding: Headless audio zeros is a "capture-path boundary mismatch" in the robot SDK, not a model or SoundDevice issue.
+## SDK Investigation Notes
+
+**reachy_mini.media.audio_sounddevice.py** (installed package):
+- Line 65-68: `sd.InputStream()` created WITHOUT explicit `channels=`
+- Line 108: Callback does `indata[:, :MAX_INPUT_CHANNELS].copy()` (clips to 4 channels)
+- Device selection looks for "Reachy Mini Audio" or "respeaker", falls back to default
+- No visible fallback-to-zeros logic in callback - if data is zeros, they came from SoundDevice
+
+If zeros persist after fixes, the issue is that SoundDevice callback receives zeros from PortAudio.
+This could be: wrong device, channel mismatch, or device not properly configured.
 </context>
