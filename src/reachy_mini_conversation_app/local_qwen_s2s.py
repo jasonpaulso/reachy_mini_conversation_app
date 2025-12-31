@@ -7,7 +7,7 @@ Qwen3-Omni-30B-A3B running on Apple Silicon via MLX.
 import asyncio
 import logging
 import tempfile
-from typing import Dict, List, Final, Tuple, Literal, Optional
+from typing import Any, Dict, List, Final, Tuple, Literal, Optional
 from pathlib import Path
 from datetime import datetime
 
@@ -58,8 +58,9 @@ class LocalQwenS2SHandler(AsyncStreamHandler):
         self.speaker = speaker
 
         # Model and processor - loaded lazily
-        self.model = None
-        self.processor = None
+        # Type annotations needed so Pylance knows these can be non-None after assignment
+        self.model: Optional[Any] = None
+        self.processor: Optional[Any] = None
 
         # Audio input buffer for collecting speech
         self._audio_buffer: List[NDArray[np.int16]] = []

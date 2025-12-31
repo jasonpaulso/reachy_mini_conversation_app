@@ -126,6 +126,10 @@ SPECIAL_TOKEN_FALLBACKS = {
     "image_token": "<|image_pad|>",
     "audio_token": "<|audio_pad|>",
     "video_token": "<|video_pad|>",
+    "vision_bos_token": "<|vision_start|>",
+    "vision_eos_token": "<|vision_end|>",
+    "audio_bos_token": "<|audio_bos|>",
+    "audio_eos_token": "<|audio_eos|>",
 }
 
 def patched_tokenizer_getattr(self: Qwen2TokenizerFast, key: str) -> object:
@@ -135,7 +139,7 @@ def patched_tokenizer_getattr(self: Qwen2TokenizerFast, key: str) -> object:
 
 Qwen2TokenizerFast.__getattr__ = patched_tokenizer_getattr  # type: ignore[method-assign]
 ```
-Applied during `start_up()` in LocalQwenS2SHandler to work around transformers bugs. First patch converts extra_special_tokens list to dict. Second patch provides fallback values for Qwen3OmniMoeProcessor's expected special tokens (image_token, audio_token, video_token) that Qwen2TokenizerFast doesn't define.
+Applied during `start_up()` in LocalQwenS2SHandler to work around transformers bugs. First patch converts extra_special_tokens list to dict. Second patch provides fallback values for Qwen3OmniMoeProcessor's expected special tokens (pad tokens, vision start/end, audio start/end) that Qwen2TokenizerFast doesn't define.
 
 **Conditional Imports:**
 ```python

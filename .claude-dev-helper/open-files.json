@@ -1,29 +1,5 @@
 [
   {
-    "filePath": "/Users/jasonschulz/Developer/robotics/reachy/.claude/auto-memory/dirty-files",
-    "timestamp": 1767183975829,
-    "focus": false,
-    "openLocation": 0
-  },
-  {
-    "filePath": "/Users/jasonschulz/Developer/robotics/reachy/src/reachy_mini_conversation_app/local_qwen_s2s.py",
-    "timestamp": 1767184633281,
-    "focus": false,
-    "openLocation": 0
-  },
-  {
-    "filePath": "/Users/jasonschulz/Developer/robotics/reachy/src/reachy_mini_conversation_app/local_qwen_s2s.py",
-    "timestamp": 1767184650452,
-    "focus": false,
-    "openLocation": 0
-  },
-  {
-    "filePath": "/Users/jasonschulz/Developer/robotics/reachy/src/reachy_mini_conversation_app/local_qwen_s2s.py",
-    "timestamp": 1767184658548,
-    "focus": false,
-    "openLocation": 0
-  },
-  {
     "filePath": "/Users/jasonschulz/Developer/robotics/reachy/src/reachy_mini_conversation_app/local_qwen_s2s.py",
     "timestamp": 1767184688106,
     "focus": false,
@@ -56,6 +32,30 @@
   {
     "filePath": "/Users/jasonschulz/Developer/robotics/reachy/src/reachy_mini_conversation_app/local_qwen_s2s.py",
     "timestamp": 1767184760606,
+    "focus": false,
+    "openLocation": 0
+  },
+  {
+    "filePath": "/Users/jasonschulz/Developer/robotics/reachy/CLAUDE.md",
+    "timestamp": 1767184918151,
+    "focus": false,
+    "openLocation": 0
+  },
+  {
+    "filePath": "/Users/jasonschulz/.claude/auto-memory/dirty-files",
+    "timestamp": 1767184928336,
+    "focus": false,
+    "openLocation": 0
+  },
+  {
+    "filePath": "/Users/jasonschulz/Developer/robotics/reachy/src/reachy_mini_conversation_app/local_qwen_s2s.py",
+    "timestamp": 1767185615798,
+    "focus": false,
+    "openLocation": 0
+  },
+  {
+    "filePath": "/Users/jasonschulz/Developer/robotics/reachy/src/reachy_mini_conversation_app/local_qwen_s2s.py",
+    "timestamp": 1767185623207,
     "focus": false,
     "openLocation": 0
   }
