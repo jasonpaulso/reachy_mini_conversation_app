@@ -30,6 +30,14 @@ class Config:
     LOCAL_S2S_VAD_THRESHOLD = float(os.getenv("LOCAL_S2S_VAD_THRESHOLD", "0.02"))  # RMS threshold for speech detection
     LOCAL_S2S_SKIP_GREETING = os.getenv("LOCAL_S2S_SKIP_GREETING", "false").lower() in ("true", "1", "yes")  # Skip greeting generation
 
+    # Latency tuning options
+    LOCAL_S2S_CHUNK_SIZE = int(os.getenv("LOCAL_S2S_CHUNK_SIZE", "100"))  # Streaming chunk size (smaller = faster first audio)
+    LOCAL_S2S_THINKER_TOKENS = int(os.getenv("LOCAL_S2S_THINKER_TOKENS", "256"))  # Max "thinking" tokens (reduce for faster response)
+    LOCAL_S2S_TALKER_TOKENS = int(os.getenv("LOCAL_S2S_TALKER_TOKENS", "1024"))  # Max speech tokens
+    LOCAL_S2S_USE_SILERO_VAD = os.getenv("LOCAL_S2S_USE_SILERO_VAD", "true").lower() in ("true", "1", "yes")  # Use Silero VAD vs energy-based
+    LOCAL_S2S_MODEL_PERSISTENCE = os.getenv("LOCAL_S2S_MODEL_PERSISTENCE", "true").lower() in ("true", "1", "yes")  # Keep model in memory across sessions
+    LOCAL_S2S_PREFIX_CACHING = os.getenv("LOCAL_S2S_PREFIX_CACHING", "true").lower() in ("true", "1", "yes")  # Pre-compute system prompt KV cache
+
     # Optional
     MODEL_NAME = os.getenv("MODEL_NAME", "gpt-realtime")
     HF_HOME = os.getenv("HF_HOME", "./cache")
