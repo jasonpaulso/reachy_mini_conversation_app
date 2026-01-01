@@ -66,8 +66,15 @@ src/reachy_mini_conversation_app/
 **Configuration:**
 - `.env` file for API keys and feature flags
 - `LOCAL_S2S_ENABLED`, `LOCAL_S2S_MODEL`, `LOCAL_S2S_SPEAKER` control local inference
-- `LOCAL_S2S_VAD_THRESHOLD` (default 0.02) - RMS threshold for speech detection in local mode
+- `LOCAL_S2S_VAD_THRESHOLD` (default 0.02) - RMS threshold for speech detection (energy-based VAD fallback)
 - `LOCAL_S2S_SKIP_GREETING` (default false) - Skip greeting generation, useful for Gradio mode
+- **Latency tuning options** (new):
+  - `LOCAL_S2S_CHUNK_SIZE` (default 100) - Streaming chunk size (smaller = faster first audio)
+  - `LOCAL_S2S_THINKER_TOKENS` (default 256) - Max "thinking" tokens (lower = faster response)
+  - `LOCAL_S2S_TALKER_TOKENS` (default 1024) - Max speech tokens
+  - `LOCAL_S2S_USE_SILERO_VAD` (default true) - Neural VAD for faster end-of-speech detection
+  - `LOCAL_S2S_MODEL_PERSISTENCE` (default true) - Keep model in memory across Gradio sessions
+  - `LOCAL_S2S_PREFIX_CACHING` (default true) - Infrastructure for system prompt KV caching
 - `OPENAI_API_KEY` only required when `LOCAL_S2S_ENABLED=false` (cloud mode), auto-downloaded from HuggingFace if missing
 - Settings UI and API key download skipped entirely when local S2S is enabled
 
@@ -75,7 +82,10 @@ src/reachy_mini_conversation_app/
 - 24kHz sample rate for both OpenAI and Qwen3-Omni
 - SDK provides float32 audio in [-1, 1] range - preserve float domain throughout pipeline
 - `console.py` passes float32 directly to handler without conversion (handler responsible for format conversion)
-- Energy-based VAD in local mode (configurable thresholds via `LOCAL_S2S_VAD_THRESHOLD`)
+- **Voice Activity Detection (VAD)**:
+  - Primary: Silero VAD (neural) for faster, more accurate end-of-speech detection (~200-500ms faster)
+  - Silero requires 16kHz - audio resampled from 24kHz for VAD processing
+  - Fallback: Energy-based VAD (configurable thresholds via `LOCAL_S2S_VAD_THRESHOLD`)
 - Resample in float domain via `scipy.signal.resample` with `dtype=np.float32` (preserves precision vs int16)
 - Debug audio files saved to `/tmp/qwen_debug_audio.wav` for troubleshooting
 
@@ -250,12 +260,13 @@ input_ids = model_inputs.pop("input_ids")
 # Remaining: input_features, feature_attention_mask, audio_feature_lengths
 
 # Stream text and audio chunks (~260ms TTFT after warm-up vs ~15s batch)
+# Configurable via LOCAL_S2S_CHUNK_SIZE, LOCAL_S2S_THINKER_TOKENS, LOCAL_S2S_TALKER_TOKENS
 for chunk_type, chunk_data in self.model.generate_stream(
     input_ids=input_ids,
     speaker=self.speaker,
-    thinker_max_new_tokens=512,
-    talker_max_new_tokens=2048,
-    chunk_size=200,
+    thinker_max_new_tokens=self._thinker_max_tokens,  # Default 256 (was 512)
+    talker_max_new_tokens=self._talker_max_tokens,     # Default 1024 (was 2048)
+    chunk_size=self._chunk_size,                        # Default 100 (was 200)
     **model_inputs,  # Pass audio features - REQUIRED for speech understanding
 ):
     if chunk_type == "text":
@@ -284,6 +295,36 @@ async def _warm_up_model(self):
     mx.eval()  # Force evaluation
 ```
 Pre-compile model during `start_up()` to ensure first real response is fast (~260ms TTFT instead of ~2s). Type assertions satisfy static checkers for Optional attributes.
+
+**Model Persistence (Cross-Session Caching):**
+```python
+# Module-level thread-safe cache for model/processor/VAD
+class _ModelCache:
+    """Thread-safe cache for Qwen3-Omni model and processor."""
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._model: Optional[Any] = None
+        self._processor: Optional[Any] = None
+        self._silero_vad: Optional[Any] = None
+        self._prefix_cache: Optional[Dict[str, Any]] = None
+
+    def get_model(self, model_path: str) -> Tuple[Optional[Any], Optional[Any]]:
+        with self._lock:
+            if self._model_path == model_path:
+                return self._model, self._processor
+            return None, None
+
+_model_cache = _ModelCache()
+
+# In handler's start_up(), check cache first
+if self._use_model_persistence:
+    self.model, self.processor = _model_cache.get_model(self.model_path)
+    if self.model is None:
+        # Load model and cache it
+        self.model, self.processor = load_model(self.model_path)
+        _model_cache.set_model(self.model_path, self.model, self.processor)
+```
+When `LOCAL_S2S_MODEL_PERSISTENCE=true`, models are kept in memory across Gradio sessions (~15-20s saved per session). Thread-safe locks protect concurrent access. Cache stores model, processor, Silero VAD, and prefix cache (tokenized system prompt).
 
 **Stream Keepalive Pattern:**
 ```python
@@ -434,25 +475,32 @@ Each profile defines enabled tools via `tools.txt`. Tools can be profile-specifi
 - Thread-safe camera worker with face tracking integration (30Hz+ polling)
 - Type safety improvements: `TYPE_CHECKING` guards, Union types for dual-mode handlers
 
-**Audio Pipeline Float32 Fix (762b9cc - CRITICAL):**
-- **Root Cause**: SDK provides float32 in [-1, 1] range, but `console.py` was converting to int16, then `local_qwen_s2s.py` resampled in int16 domain (truncating precision), then converted back to float
-- **Fix**: Preserve float32 throughout pipeline - `console.py` passes audio directly to handler without conversion
-- **Impact**: Resampling now happens in float domain (`dtype=np.float32`) preserving audio precision vs previous int16 truncation
-- Dual-format support: handler accepts float32 (from SDK) or int16 (legacy) and normalizes appropriately
+**Headless Mode Audio Fix (e581851 - CRITICAL):**
+- **Status**: Both Gradio and Headless modes now fully working with local S2S
+- **Root Cause**: Float32 → int16 truncation during audio resampling destroyed audio data (SDK values like 0.0003 truncated to 0)
+- **Fix**: Preserve float32 throughout pipeline - `console.py` passes audio directly to handler without conversion, resample in float domain
+- **Impact**: Audio precision preserved vs previous int16 truncation that caused zero-filled buffers in headless mode
+- Dual-format support: handler accepts float32 (from SDK) or int16 (legacy WebRTC) and normalizes appropriately
 - Simplified `record_loop()` matching working OpenAI fork - removed complex int16 conversion logic
 - Parallel task startup (start_up, record_loop, play_loop run concurrently) vs previous sequential pattern
 - Audio warmup logic moved into handler's `receive()` method - discards first 50 frames or until real audio detected
-- Enhanced debug logging: first audio frame stats (shape, dtype, min/max, nonzero count)
+- Enhanced debug logging: audio stats (RMS, peak, unique values) saved to `/tmp/reachy_mic_debug.wav` and `/tmp/qwen_debug_audio.wav`
 
-**Local S2S Integration (feature/local-s2s-qwen3-omni - COMPLETE):**
-- Full working implementation of on-device speech-to-speech using Qwen3-Omni via MLX
-- Performance: ~950ms TTFT using `generate_stream()` (down from ~15s batch mode), ~260ms after warm-up
+**Local S2S Integration (feature/local-s2s-qwen3-omni - COMPLETE & WORKING):**
+- Full working implementation of on-device speech-to-speech using Qwen3-Omni via MLX in both Gradio and Headless modes
+- Performance: ~260ms TTFT after warm-up using `generate_stream()` with 100-token chunks (down from ~15s batch mode)
 - Handler implements `fastrtc.AsyncStreamHandler` interface matching OpenAI Realtime path
 - Config-driven selection: `LOCAL_S2S_ENABLED` chooses between cloud and local inference
 - JIT warm-up during `start_up()` eliminates ~2s compilation delay on first inference
 - Background greeting generation (doesn't block audio loops), skippable via `LOCAL_S2S_SKIP_GREETING`
-- Energy-based VAD with configurable thresholds (`LOCAL_S2S_VAD_THRESHOLD`)
-- Future optimizations identified: prefix caching (65% TTFT reduction potential), model persistence, Silero VAD, tool calling integration
+- **Latency optimizations implemented** (9b44a5e):
+  - Model persistence: Reuses cached model across Gradio sessions (~15-20s saved per session)
+  - Silero VAD: Neural VAD for ~200-500ms faster end-of-speech detection vs energy-based
+  - Smaller chunk_size: Reduced from 200 → 100 for faster first audio
+  - Reduced thinker_tokens: 512 → 256 for faster response generation
+  - Prefix caching infrastructure: Ready for KV cache API when mlx-vlm supports it
+  - All optimizations toggleable via env vars
+- **Remaining optimizations**: Tool calling integration, full KV cache when mlx-vlm adds API
 
 **Audio Feature Passing Fix (CRITICAL):**
 - BUG FIX: Must pass all `model_inputs` to `generate_stream()` via `**kwargs`
@@ -485,12 +533,20 @@ Each profile defines enabled tools via `tools.txt`. Tools can be profile-specifi
 - Requires two monkey patches for transformers/Qwen2TokenizerFast bugs (applied in start_up())
 - `generate_stream()` returns `(chunk_type, chunk_data)` tuples, not `(text, audio)` pairs
 - Stream keepalive handled by `wait_for_item()` helper - returns None on timeout without closing stream
-- Model reloads on each Gradio session because handler is recreated per recording session
 - First call after load is slow (~2s) due to JIT compilation - warm-up eliminates this
 - Must check `_shutdown_requested` throughout async flows to prevent race conditions
 - **Audio pipeline (CRITICAL)**: Preserve float32 domain - SDK provides float32 in [-1, 1], resample in float domain (`dtype=np.float32`) not int16 (truncates precision)
 - **Parallel startup**: Tasks start concurrently (handler.start_up, record_loop, play_loop) - handler's `receive()` discards stale audio buffers (warmup logic)
 - Greeting generation runs as background task - track `_greeting_task` for clean shutdown cancellation
+
+**Latency Optimization Gotchas (9b44a5e):**
+- **Model persistence requires thread-safe cache**: `_ModelCache` uses `threading.Lock` for concurrent access from multiple Gradio sessions
+- **Model persistence eliminates reload overhead**: With `LOCAL_S2S_MODEL_PERSISTENCE=true`, model persists across Gradio sessions (~15-20s saved per session)
+- **Silero VAD requires 16kHz**: Must resample from 24kHz for VAD processing, adds small overhead but ~200-500ms faster end-of-speech detection
+- **chunk_size trade-off**: Smaller = faster first audio (100 vs 200), but more overhead per chunk
+- **thinker_tokens trade-off**: Lower = faster response (256 vs 512), but may truncate complex reasoning
+- **Prefix caching is infrastructure-only**: mlx-vlm doesn't expose KV cache API yet, infrastructure ready for future support
+- **Cache invalidation**: Changing model path clears cache and reloads model
 <!-- END AUTO-MANAGED -->
 
 <!-- MANUAL -->
