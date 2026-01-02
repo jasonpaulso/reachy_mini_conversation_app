@@ -114,7 +114,7 @@ async function savePersonality(payload) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     },
-    5000
+    5000,
   );
   if (resp.ok) return await resp.json();
 
@@ -124,7 +124,7 @@ async function savePersonality(payload) {
     form.set("name", payload.name || "");
     form.set("instructions", payload.instructions || "");
     form.set("tools_text", payload.tools_text || "");
-    form.set("voice", payload.voice || "Aiden");
+    form.set("voice", payload.voice || "marin");
     const url = new URL("/personalities/save_raw", window.location.origin);
     url.searchParams.set("_", Date.now().toString());
     resp = await fetchWithTimeout(
@@ -134,7 +134,7 @@ async function savePersonality(payload) {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: form.toString(),
       },
-      5000
+      5000,
     );
     if (resp.ok) return await resp.json();
   } catch {}
@@ -145,7 +145,7 @@ async function savePersonality(payload) {
     url.searchParams.set("name", payload.name || "");
     url.searchParams.set("instructions", payload.instructions || "");
     url.searchParams.set("tools_text", payload.tools_text || "");
-    url.searchParams.set("voice", payload.voice || "Aiden");
+    url.searchParams.set("voice", payload.voice || "marin");
     url.searchParams.set("_", Date.now().toString());
     resp = await fetchWithTimeout(url, { method: "GET" }, 5000);
     if (resp.ok) return await resp.json();
@@ -179,7 +179,7 @@ async function getVoices() {
     if (!resp.ok) throw new Error("voices_failed");
     return await resp.json();
   } catch (e) {
-    return ["Aiden"];
+    return ["marin"];
   }
 }
 
@@ -411,7 +411,7 @@ async function init() {
       const data = await loadPersonality(selected);
       pInstr.value = data.instructions || "";
       pTools.value = data.tools_text || "";
-      pVoice.value = data.voice || "Aiden";
+      pVoice.value = data.voice || "marin";
       // Available tools as checkboxes
       renderToolCheckboxes(data.available_tools, data.enabled_tools);
       attachToolHandlers();
@@ -469,7 +469,7 @@ async function init() {
       pAvail.querySelectorAll('input[type="checkbox"]').forEach((el) => {
         el.checked = false;
       });
-      pVoice.value = "Aiden";
+      pVoice.value = "marin";
       pStatus.textContent = "Fill fields and click Save.";
       pStatus.className = "status";
     });
@@ -490,7 +490,7 @@ async function init() {
           name,
           instructions: pInstr.value || "",
           tools_text: pTools.value || "",
-          voice: pVoice.value || "Aiden",
+          voice: pVoice.value || "marin",
         });
         // Refresh select choices
         pSelect.innerHTML = "";

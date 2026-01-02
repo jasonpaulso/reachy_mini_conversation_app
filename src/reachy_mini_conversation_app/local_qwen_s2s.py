@@ -45,7 +45,7 @@ class LocalQwenS2SHandler(AsyncStreamHandler):
         Args:
             deps: Tool dependencies for robot control.
             model_path: HuggingFace model path for Qwen3-Omni MLX weights.
-            speaker: Voice to use - "Ethan", "Chelsie", or "Aiden".
+            speaker: Voice to use - "Ethan", "Chelsie", or "marin".
 
         """
         super().__init__(
@@ -353,7 +353,9 @@ class LocalQwenS2SHandler(AsyncStreamHandler):
             if has_audio:
                 logger.info("Audio warmup complete - detected real audio after %d frames", self._audio_warmup_frames)
             else:
-                logger.info("Audio warmup complete - timeout after %d frames (no audio detected)", self._audio_warmup_frames)
+                logger.info(
+                    "Audio warmup complete - timeout after %d frames (no audio detected)", self._audio_warmup_frames
+                )
 
         # Log sample rate and audio info once (after warmup)
         if not hasattr(self, "_input_sr_logged"):
@@ -400,7 +402,13 @@ class LocalQwenS2SHandler(AsyncStreamHandler):
             self._rms_log_counter = 0
         self._rms_log_counter += 1
         if self._rms_log_counter % 50 == 0:  # Log every ~50 frames
-            logger.info("VAD: rms=%.4f, threshold=%.4f, is_speech=%s, speaking=%s", rms, self._vad_threshold, is_speech, self._is_speaking)
+            logger.info(
+                "VAD: rms=%.4f, threshold=%.4f, is_speech=%s, speaking=%s",
+                rms,
+                self._vad_threshold,
+                is_speech,
+                self._is_speaking,
+            )
 
         if is_speech:
             self._silence_frames = 0
@@ -632,7 +640,11 @@ class LocalQwenS2SHandler(AsyncStreamHandler):
             if self._emit_audio_count <= 3 or self._emit_audio_count % 50 == 0:
                 logger.info(
                     "emit(): audio chunk #%d, sr=%d, shape=%s, dtype=%s, queue=%d",
-                    self._emit_audio_count, sr, audio.shape, audio.dtype, self.output_queue.qsize()
+                    self._emit_audio_count,
+                    sr,
+                    audio.shape,
+                    audio.dtype,
+                    self.output_queue.qsize(),
                 )
 
             qsize = self.output_queue.qsize()
@@ -686,4 +698,4 @@ class LocalQwenS2SHandler(AsyncStreamHandler):
 
     async def get_available_voices(self) -> List[str]:
         """Get available voices (Qwen3-Omni supports a fixed set)."""
-        return ["Ethan", "Chelsie", "Aiden"]
+        return ["Ethan", "Chelsie", "marin"]
