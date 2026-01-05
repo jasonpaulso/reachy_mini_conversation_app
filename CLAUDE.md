@@ -1,7 +1,7 @@
 # Reachy Mini Conversation App
 
 <!-- AUTO-MANAGED: project-description -->
-Conversational app for the Reachy Mini robot combining real-time speech-to-speech APIs (OpenAI Realtime or local Qwen3-Omni), vision pipelines, and choreographed motion libraries. Supports both cloud-based and on-device inference.
+Conversational app for the Reachy Mini robot combining real-time speech-to-speech APIs (OpenAI Realtime, ElevenLabs Voice Agent, or local Qwen3-Omni), vision pipelines, and choreographed motion libraries. Supports cloud-based (OpenAI, ElevenLabs) and on-device (MLX) inference.
 <!-- END AUTO-MANAGED -->
 
 <!-- AUTO-MANAGED: build-commands -->
@@ -35,10 +35,12 @@ reachy-mini-conversation-app --gradio  # With web UI
 ```
 src/reachy_mini_conversation_app/
 ├── main.py                    # Entry point, handler selection
-├── config.py                  # Environment config (OpenAI/local S2S)
+├── config.py                  # Environment config (OpenAI/ElevenLabs/local S2S)
 ├── console.py                 # LocalStream for headless mode
 ├── headless_personality_ui.py # REST API for personality management
 ├── openai_realtime.py         # OpenAI Realtime handler
+├── elevenlabs_realtime.py     # ElevenLabs Voice Agent handler
+├── elevenlabs_audio.py        # Custom AudioInterface for ElevenLabs
 ├── local_qwen_s2s.py         # Local Qwen3-Omni S2S handler
 ├── moves.py                   # MovementManager, motion queuing
 ├── prompts.py                 # System instructions
@@ -46,13 +48,14 @@ src/reachy_mini_conversation_app/
 ├── audio/                     # HeadWobbler, speech reactivity
 ├── vision/                    # Vision processing (SmolVLM2, YOLO)
 ├── tools/                     # Tool calling (dance, camera, etc)
-├── profiles/                  # Personality profiles with tools.txt
+├── profiles/                  # Personality profiles with tools.txt, agent_id.txt
 └── static/                    # Settings UI
 ```
 
-**Handler Selection:**
+**Handler Selection (priority order):**
+- `ELEVENLABS_ENABLED=true` → `ElevenLabsRealtimeHandler` (ElevenLabs Voice Agent API)
 - `LOCAL_S2S_ENABLED=true` → `LocalQwenS2SHandler` (on-device MLX inference)
-- `LOCAL_S2S_ENABLED=false` → `OpenaiRealtimeHandler` (cloud API)
+- Default → `OpenaiRealtimeHandler` (OpenAI Realtime API)
 
 **Personality System:**
 - Profiles in `profiles/` directory with `instructions.txt`, `tools.txt`, `voice.txt`
@@ -65,14 +68,16 @@ src/reachy_mini_conversation_app/
 
 **Configuration:**
 - `.env` file for API keys and feature flags
+- `ELEVENLABS_ENABLED`, `ELEVENLABS_API_KEY`, `ELEVENLABS_DEFAULT_AGENT_ID` control ElevenLabs Voice Agent
 - `LOCAL_S2S_ENABLED`, `LOCAL_S2S_MODEL`, `LOCAL_S2S_SPEAKER` control local inference
 - `LOCAL_S2S_VAD_THRESHOLD` (default 0.02) - RMS threshold for speech detection in local mode
 - `LOCAL_S2S_SKIP_GREETING` (default false) - Skip greeting generation, useful for Gradio mode
-- `OPENAI_API_KEY` only required when `LOCAL_S2S_ENABLED=false` (cloud mode), auto-downloaded from HuggingFace if missing
+- `OPENAI_API_KEY` only required when using OpenAI Realtime (default mode)
+- ElevenLabs agents configured via dashboard; profile maps to agent via `profiles/{name}/agent_id.txt`
 - Settings UI and API key download skipped entirely when local S2S is enabled
 
 **Audio Processing:**
-- 24kHz sample rate for both OpenAI and Qwen3-Omni
+- 24kHz sample rate for OpenAI and Qwen3-Omni; 16kHz for ElevenLabs
 - SDK provides float32 audio in [-1, 1] range - preserve float domain throughout pipeline
 - `console.py` passes float32 directly to handler without conversion (handler responsible for format conversion)
 - Energy-based VAD in local mode (configurable thresholds via `LOCAL_S2S_VAD_THRESHOLD`)
@@ -80,16 +85,17 @@ src/reachy_mini_conversation_app/
 - Debug audio files saved to `/tmp/qwen_debug_audio.wav` for troubleshooting
 
 **Handler Interface:**
-- Both handlers implement `fastrtc.AsyncStreamHandler`
+- All handlers implement `fastrtc.AsyncStreamHandler`
 - `receive()` for incoming audio, `output_queue` for outgoing audio
 - `copy()` method required for handler instantiation
+- `apply_personality(profile)` for runtime personality switching
 
 **Type Safety:**
 - Use `assert` statements after optional type loads to satisfy type checkers
 - Explicit `np.asarray(..., dtype=np.int16)` for scipy operations returning Any
 - Type assertions before accessing dynamically loaded models/processors
 - `TYPE_CHECKING` block for forward references to avoid circular imports (e.g., LocalQwenS2SHandler in console.py)
-- Union types for dual-mode handlers: `Union[OpenaiRealtimeHandler, LocalQwenS2SHandler]`
+- Union types for tri-mode handlers: `Union[ElevenLabsRealtimeHandler, LocalQwenS2SHandler, OpenaiRealtimeHandler]`
 - String type annotations for forward references: `"Union[...]"` when class not yet defined
 
 **Tool System:**

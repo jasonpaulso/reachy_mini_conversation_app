@@ -23,6 +23,11 @@ class Config:
     # Required (only for OpenAI mode)
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")  # The key is downloaded in console.py if needed
 
+    # ElevenLabs Conversational AI configuration
+    ELEVENLABS_API_KEY: str = os.getenv("ELEVENLABS_API_KEY", "")
+    ELEVENLABS_ENABLED: bool = os.getenv("ELEVENLABS_ENABLED", "false").lower() in ("true", "1", "yes")
+    ELEVENLABS_DEFAULT_AGENT_ID: str = os.getenv("ELEVENLABS_DEFAULT_AGENT_ID", "")
+
     # Local S2S configuration (Qwen3-Omni)
     LOCAL_S2S_ENABLED = os.getenv("LOCAL_S2S_ENABLED", "false").lower() in ("true", "1", "yes")
     LOCAL_S2S_MODEL = os.getenv("LOCAL_S2S_MODEL", "mlx-community/Qwen3-Omni-30B-A3B-Instruct-4bit")
@@ -42,6 +47,7 @@ class Config:
 
     logger.debug(f"Model: {MODEL_NAME}, HF_HOME: {HF_HOME}, Vision Model: {LOCAL_VISION_MODEL}")
     logger.debug(f"Local S2S: enabled={LOCAL_S2S_ENABLED}, model={LOCAL_S2S_MODEL}, speaker={LOCAL_S2S_SPEAKER}")
+    logger.debug(f"ElevenLabs: enabled={ELEVENLABS_ENABLED}, agent_id={ELEVENLABS_DEFAULT_AGENT_ID[:8] + '...' if ELEVENLABS_DEFAULT_AGENT_ID else 'not set'}")
 
     REACHY_MINI_CUSTOM_PROFILE = os.getenv("REACHY_MINI_CUSTOM_PROFILE")
     logger.debug(f"Custom Profile: {REACHY_MINI_CUSTOM_PROFILE}")

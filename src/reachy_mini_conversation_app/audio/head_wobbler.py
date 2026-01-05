@@ -40,11 +40,24 @@ class HeadWobbler:
         self._thread: threading.Thread | None = None
 
     def feed(self, delta_b64: str) -> None:
-        """Thread-safe: push audio into the consumer queue."""
+        """Thread-safe: push base64-encoded audio into the consumer queue."""
         buf = np.frombuffer(base64.b64decode(delta_b64), dtype=np.int16).reshape(1, -1)
         with self._state_lock:
             generation = self._generation
         self.audio_queue.put((generation, SAMPLE_RATE, buf))
+
+    def feed_bytes(self, audio_bytes: bytes, sample_rate: int = SAMPLE_RATE) -> None:
+        """Thread-safe: push raw PCM bytes into the consumer queue.
+
+        Args:
+            audio_bytes: Raw PCM int16 audio bytes
+            sample_rate: Sample rate of the audio (default 24kHz)
+
+        """
+        buf = np.frombuffer(audio_bytes, dtype=np.int16).reshape(1, -1)
+        with self._state_lock:
+            generation = self._generation
+        self.audio_queue.put((generation, sample_rate, buf))
 
     def start(self) -> None:
         """Start the head wobbler loop in a thread."""

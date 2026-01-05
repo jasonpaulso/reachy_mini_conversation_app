@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Union, Optional
 
 if TYPE_CHECKING:
     from reachy_mini_conversation_app.local_qwen_s2s import LocalQwenS2SHandler
+    from reachy_mini_conversation_app.elevenlabs_realtime import ElevenLabsRealtimeHandler
 
 import gradio as gr
 from fastapi import FastAPI
@@ -114,9 +115,13 @@ def run(
     )
     logger.debug(f"Chatbot avatar images: {chatbot.avatar_images}")
 
-    # Choose handler based on config
-    handler: Union["LocalQwenS2SHandler", OpenaiRealtimeHandler]
-    if config.LOCAL_S2S_ENABLED:
+    # Choose handler based on config (priority: ElevenLabs > Local S2S > OpenAI)
+    handler: Union["ElevenLabsRealtimeHandler", "LocalQwenS2SHandler", OpenaiRealtimeHandler]
+    if config.ELEVENLABS_ENABLED:
+        from reachy_mini_conversation_app.elevenlabs_realtime import ElevenLabsRealtimeHandler
+        logger.info("Using ElevenLabs Conversational AI (agent_id=%s)", config.ELEVENLABS_DEFAULT_AGENT_ID[:8] + "..." if config.ELEVENLABS_DEFAULT_AGENT_ID else "from profile")
+        handler = ElevenLabsRealtimeHandler(deps, gradio_mode=args.gradio, instance_path=instance_path)
+    elif config.LOCAL_S2S_ENABLED:
         from reachy_mini_conversation_app.local_qwen_s2s import LocalQwenS2SHandler
         logger.info("Using LOCAL Qwen3-Omni S2S (model=%s, speaker=%s)", config.LOCAL_S2S_MODEL, config.LOCAL_S2S_SPEAKER)
         handler = LocalQwenS2SHandler(
