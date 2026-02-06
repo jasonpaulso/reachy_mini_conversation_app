@@ -54,6 +54,7 @@ class ToolDependencies:
     camera_worker: Any | None = None  # CameraWorker for frame buffering
     vision_manager: Any | None = None
     head_wobbler: Any | None = None  # HeadWobbler for audio-reactive motion
+    openclaw_bridge: Any | None = None  # OpenClawBridge for OpenClaw gateway
     motion_duration_s: float = 1.0
 
 

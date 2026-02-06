@@ -1,0 +1,41 @@
+{
+    "type": "client",
+    "name": "dance",
+    "description": "Play a named or random dance move once (or repeat). Available moves: simple_nod, head_tilt_roll, side_to_side_sway, dizzy_spin, stumble_and_recover, interwoven_spirals, sharp_side_tilt, side_peekaboo, yeah_nod, uh_huh_tilt, neck_recoil, chin_lead, groovy_sway_and_roll, chicken_peck, side_glance_flick, polyrhythm_combo, grid_snap, pendulum_swing, jackson_square. Use 'random' or omit for random.",
+    "disable_interruptions": false,
+    "force_pre_tool_speech": "auto",
+    "assignments": [],
+    "tool_call_sound": null,
+    "tool_call_sound_behavior": "auto",
+    "tool_error_handling_mode": "auto",
+    "execution_mode": "immediate",
+    "expects_response": true,
+    "response_timeout_secs": 5,
+    "parameters": [
+        {
+            "id": "move",
+            "type": "string",
+            "value_type": "llm_prompt",
+            "description": "Name of the move; use 'random' or omit for random.",
+            "dynamic_variable": "",
+            "constant_value": "",
+            "enum": null,
+            "is_system_provided": false,
+            "required": false
+        },
+        {
+            "id": "repeat",
+            "type": "string",
+            "value_type": "llm_prompt",
+            "description": "How many times to repeat the move (default 1).",
+            "dynamic_variable": "",
+            "constant_value": "",
+            "enum": null,
+            "is_system_provided": false,
+            "required": false
+        }
+    ],
+    "dynamic_variables": {
+        "dynamic_variable_placeholders": {}
+    }
+}

@@ -59,10 +59,7 @@ def run(
     logger.info("Starting Reachy Mini Conversation App")
 
     if args.no_camera and args.head_tracker is not None:
-        logger.warning(
-            "Head tracking disabled: --no-camera flag is set. "
-            "Remove --no-camera to enable head tracking."
-        )
+        logger.warning("Head tracking disabled: --no-camera flag is set. Remove --no-camera to enable head tracking.")
 
     if robot is None:
         try:
@@ -74,25 +71,17 @@ def run(
             robot = ReachyMini(**robot_kwargs)
 
         except TimeoutError as e:
-            logger.error(
-                "Connection timeout: Failed to connect to Reachy Mini daemon. "
-                f"Details: {e}"
-            )
+            logger.error(f"Connection timeout: Failed to connect to Reachy Mini daemon. Details: {e}")
             log_connection_troubleshooting(logger, args.robot_name)
             sys.exit(1)
 
         except ConnectionError as e:
-            logger.error(
-                "Connection failed: Unable to establish connection to Reachy Mini. "
-                f"Details: {e}"
-            )
+            logger.error(f"Connection failed: Unable to establish connection to Reachy Mini. Details: {e}")
             log_connection_troubleshooting(logger, args.robot_name)
             sys.exit(1)
 
         except Exception as e:
-            logger.error(
-                f"Unexpected error during robot initialization: {type(e).__name__}: {e}"
-            )
+            logger.error(f"Unexpected error during robot initialization: {type(e).__name__}: {e}")
             logger.error("Please check your configuration and try again.")
             sys.exit(1)
 
@@ -113,12 +102,39 @@ def run(
 
     head_wobbler = HeadWobbler(set_speech_offsets=movement_manager.set_speech_offsets)
 
+    # Initialize OpenClaw bridge if enabled
+    openclaw_bridge = None
+    if config.OPENCLAW_ENABLED:
+        from reachy_mini_conversation_app.openclaw_bridge import OpenClawBridge
+
+        logger.info(
+            "OpenClaw integration enabled (gateway=%s, agent=%s)",
+            config.OPENCLAW_GATEWAY_URL,
+            config.OPENCLAW_AGENT_ID,
+        )
+        openclaw_bridge = OpenClawBridge(
+            gateway_url=config.OPENCLAW_GATEWAY_URL,
+            gateway_token=config.OPENCLAW_TOKEN,
+            agent_id=config.OPENCLAW_AGENT_ID,
+            session_key=config.OPENCLAW_SESSION_KEY,
+        )
+        # Test connection at startup (non-blocking, log warning if unreachable)
+        try:
+            loop = asyncio.new_event_loop()
+            connected = loop.run_until_complete(openclaw_bridge.connect())
+            loop.close()
+            if not connected:
+                logger.warning("OpenClaw gateway unreachable — will retry on first request")
+        except Exception as e:
+            logger.warning("OpenClaw connection test failed: %s", e)
+
     deps = ToolDependencies(
         reachy_mini=robot,
         movement_manager=movement_manager,
         camera_worker=camera_worker,
         vision_manager=vision_manager,
         head_wobbler=head_wobbler,
+        openclaw_bridge=openclaw_bridge,
     )
     current_file_path = os.path.dirname(os.path.abspath(__file__))
     logger.debug(f"Current file absolute path: {current_file_path}")
@@ -136,11 +152,18 @@ def run(
     handler: Union["ElevenLabsRealtimeHandler", "LocalQwenS2SHandler", OpenaiRealtimeHandler]
     if config.ELEVENLABS_ENABLED:
         from reachy_mini_conversation_app.elevenlabs_realtime import ElevenLabsRealtimeHandler
-        logger.info("Using ElevenLabs Conversational AI (agent_id=%s)", config.ELEVENLABS_DEFAULT_AGENT_ID[:8] + "..." if config.ELEVENLABS_DEFAULT_AGENT_ID else "from profile")
+
+        logger.info(
+            "Using ElevenLabs Conversational AI (agent_id=%s)",
+            config.ELEVENLABS_DEFAULT_AGENT_ID[:8] + "..." if config.ELEVENLABS_DEFAULT_AGENT_ID else "from profile",
+        )
         handler = ElevenLabsRealtimeHandler(deps, gradio_mode=args.gradio, instance_path=instance_path)
     elif config.LOCAL_S2S_ENABLED:
         from reachy_mini_conversation_app.local_qwen_s2s import LocalQwenS2SHandler
-        logger.info("Using LOCAL Qwen3-Omni S2S (model=%s, speaker=%s)", config.LOCAL_S2S_MODEL, config.LOCAL_S2S_SPEAKER)
+
+        logger.info(
+            "Using LOCAL Qwen3-Omni S2S (model=%s, speaker=%s)", config.LOCAL_S2S_MODEL, config.LOCAL_S2S_SPEAKER
+        )
         handler = LocalQwenS2SHandler(
             deps,
             model_path=config.LOCAL_S2S_MODEL,

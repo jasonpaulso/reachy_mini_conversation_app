@@ -47,7 +47,18 @@ class Config:
 
     logger.debug(f"Model: {MODEL_NAME}, HF_HOME: {HF_HOME}, Vision Model: {LOCAL_VISION_MODEL}")
     logger.debug(f"Local S2S: enabled={LOCAL_S2S_ENABLED}, model={LOCAL_S2S_MODEL}, speaker={LOCAL_S2S_SPEAKER}")
-    logger.debug(f"ElevenLabs: enabled={ELEVENLABS_ENABLED}, agent_id={ELEVENLABS_DEFAULT_AGENT_ID[:8] + '...' if ELEVENLABS_DEFAULT_AGENT_ID else 'not set'}")
+    logger.debug(
+        f"ElevenLabs: enabled={ELEVENLABS_ENABLED}, agent_id={ELEVENLABS_DEFAULT_AGENT_ID[:8] + '...' if ELEVENLABS_DEFAULT_AGENT_ID else 'not set'}"
+    )
+
+    # OpenClaw integration (ElevenLabs voice relay + OpenClaw intelligence)
+    OPENCLAW_ENABLED: bool = os.getenv("OPENCLAW_ENABLED", "false").lower() in ("true", "1", "yes")
+    OPENCLAW_GATEWAY_URL: str = os.getenv("OPENCLAW_GATEWAY_URL", "http://localhost:18789")
+    OPENCLAW_TOKEN: str = os.getenv("OPENCLAW_TOKEN", "")
+    OPENCLAW_AGENT_ID: str = os.getenv("OPENCLAW_AGENT_ID", "main")
+    OPENCLAW_SESSION_KEY: str = os.getenv("OPENCLAW_SESSION_KEY", "main")
+
+    logger.debug(f"OpenClaw: enabled={OPENCLAW_ENABLED}, gateway={OPENCLAW_GATEWAY_URL}, agent={OPENCLAW_AGENT_ID}")
 
     REACHY_MINI_CUSTOM_PROFILE = os.getenv("REACHY_MINI_CUSTOM_PROFILE")
     logger.debug(f"Custom Profile: {REACHY_MINI_CUSTOM_PROFILE}")

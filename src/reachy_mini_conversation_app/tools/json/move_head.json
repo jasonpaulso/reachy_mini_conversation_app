@@ -1,0 +1,30 @@
+{
+    "type": "client",
+    "name": "move_head",
+    "description": "Move the robot's head in a given direction: left, right, up, down, or front.",
+    "disable_interruptions": false,
+    "force_pre_tool_speech": "auto",
+    "assignments": [],
+    "tool_call_sound": null,
+    "tool_call_sound_behavior": "auto",
+    "tool_error_handling_mode": "auto",
+    "execution_mode": "immediate",
+    "expects_response": false,
+    "response_timeout_secs": 3,
+    "parameters": [
+        {
+            "id": "direction",
+            "type": "string",
+            "value_type": "llm_prompt",
+            "description": "Direction to move: left, right, up, down, or front.",
+            "dynamic_variable": "",
+            "constant_value": "",
+            "enum": null,
+            "is_system_provided": false,
+            "required": true
+        }
+    ],
+    "dynamic_variables": {
+        "dynamic_variable_placeholders": {}
+    }
+}

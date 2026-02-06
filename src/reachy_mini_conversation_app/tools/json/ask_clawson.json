@@ -1,0 +1,30 @@
+{
+    "type": "client",
+    "name": "ask_clawson",
+    "description": "Send the user's message to the Clawson AI assistant and get a response. Always call this tool with the user's exact message.",
+    "disable_interruptions": false,
+    "force_pre_tool_speech": "auto",
+    "assignments": [],
+    "tool_call_sound": null,
+    "tool_call_sound_behavior": "auto",
+    "tool_error_handling_mode": "auto",
+    "execution_mode": "immediate",
+    "expects_response": true,
+    "response_timeout_secs": 30,
+    "parameters": [
+        {
+            "id": "message",
+            "type": "string",
+            "value_type": "llm_prompt",
+            "description": "The user's message to send to Clawson.",
+            "dynamic_variable": "",
+            "constant_value": "",
+            "enum": null,
+            "is_system_provided": false,
+            "required": true
+        }
+    ],
+    "dynamic_variables": {
+        "dynamic_variable_placeholders": {}
+    }
+}

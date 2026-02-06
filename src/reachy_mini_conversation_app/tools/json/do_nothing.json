@@ -1,0 +1,30 @@
+{
+    "type": "client",
+    "name": "do_nothing",
+    "description": "Choose to do nothing - stay still and silent. Use when you want to be contemplative or just chill.",
+    "disable_interruptions": false,
+    "force_pre_tool_speech": "auto",
+    "assignments": [],
+    "tool_call_sound": null,
+    "tool_call_sound_behavior": "auto",
+    "tool_error_handling_mode": "auto",
+    "execution_mode": "immediate",
+    "expects_response": false,
+    "response_timeout_secs": 1,
+    "parameters": [
+        {
+            "id": "reason",
+            "type": "string",
+            "value_type": "llm_prompt",
+            "description": "Optional reason for doing nothing (e.g., 'contemplating existence', 'saving energy').",
+            "dynamic_variable": "",
+            "constant_value": "",
+            "enum": null,
+            "is_system_provided": false,
+            "required": false
+        }
+    ],
+    "dynamic_variables": {
+        "dynamic_variable_placeholders": {}
+    }
+}

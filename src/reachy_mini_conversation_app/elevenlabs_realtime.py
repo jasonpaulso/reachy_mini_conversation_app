@@ -10,22 +10,23 @@ import logging
 from typing import Any, Tuple, Optional
 
 import numpy as np
-from numpy.typing import NDArray
 from fastrtc import AdditionalOutputs, AsyncStreamHandler, wait_for_item
+from numpy.typing import NDArray
 from elevenlabs.client import ElevenLabs
-from elevenlabs.conversational_ai.conversation import Conversation, ClientTools
+from elevenlabs.conversational_ai.conversation import ClientTools, Conversation
 
 from reachy_mini_conversation_app.config import config
 from reachy_mini_conversation_app.elevenlabs_audio import (
+    ELEVENLABS_SAMPLE_RATE,
     ReachyAudioInterface,
     convert_audio_for_elevenlabs,
-    ELEVENLABS_SAMPLE_RATE,
 )
 from reachy_mini_conversation_app.tools.core_tools import (
     ToolDependencies,
     get_tool_specs,
     dispatch_tool_call,
 )
+from reachy_mini_conversation_app.tools.openclaw_relay import set_pending_response
 
 
 logger = logging.getLogger(__name__)
@@ -361,6 +362,9 @@ class ElevenLabsRealtimeHandler(AsyncStreamHandler):
     def _on_user_transcript(self, transcript: str) -> None:
         """Handle user transcript callback.
 
+        When OpenClaw is enabled, pre-fetches the response in parallel so
+        the ask_clawson tool can return immediately.
+
         Args:
             transcript: User's transcribed speech
 
@@ -378,6 +382,10 @@ class ElevenLabsRealtimeHandler(AsyncStreamHandler):
         if self.deps.movement_manager is not None:
             self.deps.movement_manager.set_listening(True)
 
+        # Pre-fetch OpenClaw response when bridge is available
+        if self.deps.openclaw_bridge is not None and transcript.strip():
+            self._prefetch_openclaw(transcript)
+
         def put_transcript() -> None:
             try:
                 self.output_queue.put_nowait(AdditionalOutputs({"role": "user", "content": transcript}))
@@ -386,6 +394,27 @@ class ElevenLabsRealtimeHandler(AsyncStreamHandler):
 
         self._loop.call_soon_threadsafe(put_transcript)
         logger.debug("User transcript: %s", transcript)
+
+    def _prefetch_openclaw(self, transcript: str) -> None:
+        """Fire an async OpenClaw request and store the future for the relay tool.
+
+        Args:
+            transcript: User's transcribed speech to send to OpenClaw
+
+        """
+        from reachy_mini_conversation_app.tools.openclaw_relay import ROBOT_SYSTEM_CONTEXT
+
+        bridge = self.deps.openclaw_bridge
+
+        async def _do_prefetch() -> Any:
+            return await bridge.chat(
+                message=transcript,
+                system_context=ROBOT_SYSTEM_CONTEXT,
+            )
+
+        future = asyncio.run_coroutine_threadsafe(_do_prefetch(), self._loop)
+        set_pending_response(future)
+        logger.debug("OpenClaw pre-fetch started for: %s", transcript[:80])
 
     def _on_latency_measurement(self, latency: float) -> None:
         """Handle latency measurement callback.
@@ -419,6 +448,7 @@ class ElevenLabsRealtimeHandler(AsyncStreamHandler):
                         RECORDED_MOVES,
                         EMOTION_AVAILABLE,
                     )
+
                     if EMOTION_AVAILABLE and RECORDED_MOVES is not None:
                         emotions = RECORDED_MOVES.list_moves()
                         args = {"emotion": random.choice(emotions)}

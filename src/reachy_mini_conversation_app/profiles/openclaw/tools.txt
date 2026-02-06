@@ -1,0 +1,10 @@
+# OpenClaw relay — routes all user messages through OpenClaw gateway
+openclaw_relay
+
+# Robot body tools (dispatched by relay based on OpenClaw response keywords)
+dance
+stop_dance
+play_emotion
+stop_emotion
+camera
+move_head
