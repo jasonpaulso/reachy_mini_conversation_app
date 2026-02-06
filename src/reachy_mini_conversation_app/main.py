@@ -6,7 +6,12 @@ import time
 import asyncio
 import argparse
 import threading
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Union, Optional
+
+
+if TYPE_CHECKING:
+    from reachy_mini_conversation_app.local_qwen_s2s import LocalQwenS2SHandler
+    from reachy_mini_conversation_app.elevenlabs_realtime import ElevenLabsRealtimeHandler
 
 import gradio as gr
 from fastapi import FastAPI
@@ -36,7 +41,7 @@ def main() -> None:
 
 def run(
     args: argparse.Namespace,
-    robot: ReachyMini = None,
+    robot: Optional[ReachyMini] = None,
     app_stop_event: Optional[threading.Event] = None,
     settings_app: Optional[FastAPI] = None,
     instance_path: Optional[str] = None,
@@ -44,6 +49,7 @@ def run(
     """Run the Reachy Mini conversation app."""
     # Putting these dependencies here makes the dashboard faster to load when the conversation app is installed
     from reachy_mini_conversation_app.moves import MovementManager
+    from reachy_mini_conversation_app.config import config
     from reachy_mini_conversation_app.console import LocalStream
     from reachy_mini_conversation_app.openai_realtime import OpenaiRealtimeHandler
     from reachy_mini_conversation_app.tools.core_tools import ToolDependencies
@@ -126,7 +132,23 @@ def run(
     )
     logger.debug(f"Chatbot avatar images: {chatbot.avatar_images}")
 
-    handler = OpenaiRealtimeHandler(deps, gradio_mode=args.gradio, instance_path=instance_path)
+    # Choose handler based on config (priority: ElevenLabs > Local S2S > OpenAI)
+    handler: Union["ElevenLabsRealtimeHandler", "LocalQwenS2SHandler", OpenaiRealtimeHandler]
+    if config.ELEVENLABS_ENABLED:
+        from reachy_mini_conversation_app.elevenlabs_realtime import ElevenLabsRealtimeHandler
+        logger.info("Using ElevenLabs Conversational AI (agent_id=%s)", config.ELEVENLABS_DEFAULT_AGENT_ID[:8] + "..." if config.ELEVENLABS_DEFAULT_AGENT_ID else "from profile")
+        handler = ElevenLabsRealtimeHandler(deps, gradio_mode=args.gradio, instance_path=instance_path)
+    elif config.LOCAL_S2S_ENABLED:
+        from reachy_mini_conversation_app.local_qwen_s2s import LocalQwenS2SHandler
+        logger.info("Using LOCAL Qwen3-Omni S2S (model=%s, speaker=%s)", config.LOCAL_S2S_MODEL, config.LOCAL_S2S_SPEAKER)
+        handler = LocalQwenS2SHandler(
+            deps,
+            model_path=config.LOCAL_S2S_MODEL,
+            speaker=config.LOCAL_S2S_SPEAKER,
+        )
+    else:
+        logger.info("Using OpenAI Realtime API")
+        handler = OpenaiRealtimeHandler(deps, gradio_mode=args.gradio, instance_path=instance_path)
 
     stream_manager: gr.Blocks | LocalStream | None = None
 
@@ -235,7 +257,7 @@ class ReachyMiniConversationApp(ReachyMiniApp):  # type: ignore[misc]
         # is_wireless = reachy_mini.client.get_status()["wireless_version"]
         # args.head_tracker = None if is_wireless else "mediapipe"
 
-        instance_path = self._get_instance_path().parent
+        instance_path = str(self._get_instance_path().parent)
         run(
             args,
             robot=reachy_mini,

@@ -496,7 +496,10 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
         # Resample if needed
         if self.input_sample_rate != input_sample_rate:
-            audio_frame = resample(audio_frame, int(len(audio_frame) * self.input_sample_rate / input_sample_rate))
+            audio_frame = np.asarray(
+                resample(audio_frame, int(len(audio_frame) * self.input_sample_rate / input_sample_rate)),
+                dtype=np.float32,
+            )
 
         # Cast if needed
         audio_frame = audio_to_int16(audio_frame)
@@ -527,28 +530,37 @@ class OpenaiRealtimeHandler(AsyncStreamHandler):
 
         return await wait_for_item(self.output_queue)  # type: ignore[no-any-return]
 
-    async def shutdown(self) -> None:
+    def shutdown(self) -> None:
         """Shutdown the handler."""
         self._shutdown_requested = True
-        # Cancel any pending debounce task
-        if self.partial_transcript_task and not self.partial_transcript_task.done():
-            self.partial_transcript_task.cancel()
-            try:
-                await self.partial_transcript_task
-            except asyncio.CancelledError:
-                pass
 
-        if self.connection:
-            try:
-                await self.connection.close()
-            except ConnectionClosedError as e:
-                logger.debug(f"Connection already closed during shutdown: {e}")
-            except Exception as e:
-                logger.debug(f"connection.close() ignored: {e}")
-            finally:
-                self.connection = None
+        async def _async_shutdown() -> None:
+            # Cancel any pending debounce task
+            if self.partial_transcript_task and not self.partial_transcript_task.done():
+                self.partial_transcript_task.cancel()
+                try:
+                    await self.partial_transcript_task
+                except asyncio.CancelledError:
+                    pass
 
-        # Clear any remaining items in the output queue
+            if self.connection:
+                try:
+                    await self.connection.close()
+                except ConnectionClosedError as e:
+                    logger.debug(f"Connection already closed during shutdown: {e}")
+                except Exception as e:
+                    logger.debug(f"connection.close() ignored: {e}")
+                finally:
+                    self.connection = None
+
+        # Schedule async cleanup
+        try:
+            asyncio.create_task(_async_shutdown())
+        except RuntimeError:
+            # No event loop running, skip async cleanup
+            logger.debug("No event loop available for async shutdown")
+
+        # Clear any remaining items in the output queue (sync operation)
         while not self.output_queue.empty():
             try:
                 self.output_queue.get_nowait()

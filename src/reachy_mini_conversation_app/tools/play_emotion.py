@@ -12,24 +12,26 @@ try:
     from reachy_mini_conversation_app.dance_emotion_moves import EmotionQueueMove
 
     # Note: huggingface_hub automatically reads HF_TOKEN from environment variables
-    RECORDED_MOVES = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")
+    RECORDED_MOVES: RecordedMoves | None = RecordedMoves("pollen-robotics/reachy-mini-emotions-library")
     EMOTION_AVAILABLE = True
 except ImportError as e:
     logger.warning(f"Emotion library not available: {e}")
     RECORDED_MOVES = None
+    EmotionQueueMove = None  # type: ignore[misc, assignment]
     EMOTION_AVAILABLE = False
 
 
 def get_available_emotions_and_descriptions() -> str:
     """Get formatted list of available emotions with descriptions."""
-    if not EMOTION_AVAILABLE:
+    if not EMOTION_AVAILABLE or RECORDED_MOVES is None:
         return "Emotions not available"
 
     try:
         emotion_names = RECORDED_MOVES.list_moves()
         output = "Available emotions:\n"
         for name in emotion_names:
-            description = RECORDED_MOVES.get(name).description
+            move = RECORDED_MOVES.get(name)
+            description = move.description if move else "No description"
             output += f" - {name}: {description}\n"
         return output
     except Exception as e:
@@ -68,6 +70,8 @@ class PlayEmotion(Tool):
 
         # Check if emotion exists
         try:
+            assert RECORDED_MOVES is not None  # Guarded by EMOTION_AVAILABLE check above
+            assert EmotionQueueMove is not None  # Guarded by EMOTION_AVAILABLE check above
             emotion_names = RECORDED_MOVES.list_moves()
             if emotion_name not in emotion_names:
                 return {"error": f"Unknown emotion '{emotion_name}'. Available: {emotion_names}"}

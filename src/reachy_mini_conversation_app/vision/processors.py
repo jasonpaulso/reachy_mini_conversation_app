@@ -177,6 +177,9 @@ class VisionProcessor:
                 else:
                     return f"Vision processing error after {self.vision_config.max_retries} attempts"
 
+        # Fallback return (should never be reached due to loop logic, but satisfies type checker)
+        return "Vision processing failed"
+
     def _extract_response(self, full_text: str) -> str:
         """Extract the assistant's response from the full generated text."""
         # Handle different response formats

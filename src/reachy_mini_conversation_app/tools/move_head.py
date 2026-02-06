@@ -1,6 +1,8 @@
 import logging
 from typing import Any, Dict, Tuple, Literal
 
+import numpy as np
+
 from reachy_mini.utils import create_head_pose
 from reachy_mini_conversation_app.tools.core_tools import Tool, ToolDependencies
 from reachy_mini_conversation_app.dance_emotion_moves import GotoQueueMove
@@ -55,10 +57,10 @@ class MoveHead(Tool):
             current_head_pose = deps.reachy_mini.get_current_head_pose()
             _, current_antennas = deps.reachy_mini.get_current_joint_positions()
 
-            # Create goto move
+            # Create goto move - cast to float32 for type consistency with GotoQueueMove
             goto_move = GotoQueueMove(
-                target_head_pose=target,
-                start_head_pose=current_head_pose,
+                target_head_pose=target.astype(np.float32),
+                start_head_pose=current_head_pose.astype(np.float32),
                 target_antennas=(0, 0),  # Reset antennas to default
                 start_antennas=(
                     current_antennas[0],

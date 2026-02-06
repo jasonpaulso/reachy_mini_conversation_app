@@ -29,8 +29,8 @@ class SweepLook(Tool):
         # Clear any existing moves
         deps.movement_manager.clear_move_queue()
 
-        # Get current state
-        current_head_pose = deps.reachy_mini.get_current_head_pose()
+        # Get current state (cast to float32 for GotoQueueMove compatibility)
+        current_head_pose = deps.reachy_mini.get_current_head_pose().astype(np.float32)
         head_joints, antenna_joints = deps.reachy_mini.get_current_joint_positions()
 
         # Extract body_yaw from head joints (first element of the 7 head joint positions)
@@ -44,7 +44,7 @@ class SweepLook(Tool):
         hold_duration = 1.0  # Time to hold at each extreme
 
         # Move 1: Sweep to the left (positive yaw for both body and head)
-        left_head_pose = create_head_pose(0, 0, 0, 0, 0, max_angle, degrees=False)
+        left_head_pose = create_head_pose(0, 0, 0, 0, 0, max_angle, degrees=False).astype(np.float32)
         move_to_left = GotoQueueMove(
             target_head_pose=left_head_pose,
             start_head_pose=current_head_pose,
@@ -67,7 +67,7 @@ class SweepLook(Tool):
         )
 
         # Move 3: Return to center from left (to avoid crossing pi/-pi boundary)
-        center_head_pose = create_head_pose(0, 0, 0, 0, 0, 0, degrees=False)
+        center_head_pose = create_head_pose(0, 0, 0, 0, 0, 0, degrees=False).astype(np.float32)
         return_to_center_from_left = GotoQueueMove(
             target_head_pose=center_head_pose,
             start_head_pose=left_head_pose,
@@ -79,7 +79,7 @@ class SweepLook(Tool):
         )
 
         # Move 4: Sweep to the right (negative yaw for both body and head)
-        right_head_pose = create_head_pose(0, 0, 0, 0, 0, -max_angle, degrees=False)
+        right_head_pose = create_head_pose(0, 0, 0, 0, 0, -max_angle, degrees=False).astype(np.float32)
         move_to_right = GotoQueueMove(
             target_head_pose=right_head_pose,
             start_head_pose=center_head_pose,

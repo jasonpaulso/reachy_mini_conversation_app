@@ -15,6 +15,7 @@ try:
 except ImportError as e:
     logger.warning(f"Dance library not available: {e}")
     AVAILABLE_MOVES = {}
+    DanceQueueMove = None  # type: ignore[misc, assignment]
     DANCE_AVAILABLE = False
 
 
@@ -79,6 +80,7 @@ class Dance(Tool):
 
         # Add dance moves to queue
         movement_manager = deps.movement_manager
+        assert DanceQueueMove is not None  # Guarded by DANCE_AVAILABLE check above
         for _ in range(repeat):
             dance_move = DanceQueueMove(move_name)
             movement_manager.queue_move(dance_move)

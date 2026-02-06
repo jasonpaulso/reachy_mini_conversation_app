@@ -17,7 +17,7 @@ def _make_audio_chunk(duration_s: float = 0.3, frequency_hz: float = 220.0) -> s
     sample_rate = 24000
     sample_count = int(sample_rate * duration_s)
     t = np.linspace(0, duration_s, sample_count, endpoint=False)
-    wave = 0.6 * np.sin(2 * math.pi * frequency_hz * t)
+    wave = 0.6 * np.sin(2 * np.pi * frequency_hz * t)
     pcm = np.clip(wave * np.iinfo(np.int16).max, -32768, 32767).astype(np.int16)
     return base64.b64encode(pcm.tobytes()).decode("ascii")
 

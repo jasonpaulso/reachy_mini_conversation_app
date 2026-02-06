@@ -46,10 +46,7 @@ from numpy.typing import NDArray
 from reachy_mini import ReachyMini
 from reachy_mini.utils import create_head_pose
 from reachy_mini.motion.move import Move
-from reachy_mini.utils.interpolation import (
-    compose_world_offset,
-    linear_pose_interpolation,
-)
+from reachy_mini.utils.interpolation import compose_world_offset, linear_pose_interpolation
 
 
 logger = logging.getLogger(__name__)
@@ -105,7 +102,7 @@ class BreathingMove(Move):  # type: ignore
 
             # Interpolate head pose
             head_pose = linear_pose_interpolation(
-                self.interpolation_start_pose, self.neutral_head_pose, interpolation_t,
+                self.interpolation_start_pose.astype(np.float64), self.neutral_head_pose.astype(np.float64), interpolation_t,
             )
 
             # Interpolate antennas
@@ -147,7 +144,7 @@ def combine_full_body(primary_pose: FullBodyPose, secondary_pose: FullBodyPose) 
     # Combine head poses using compose_world_offset; the secondary pose must be an
     # offset expressed in the world frame (T_off_world) applied to the absolute
     # primary transform (T_abs).
-    combined_head = compose_world_offset(primary_head, secondary_head, reorthonormalize=True)
+    combined_head = compose_world_offset(primary_head.astype(np.float64), secondary_head.astype(np.float64), reorthonormalize=True).astype(np.float32)
 
     # Sum antennas and body_yaw
     combined_antennas = (
@@ -256,7 +253,7 @@ class MovementManager:
         # Movement state
         self.state = MovementState()
         self.state.last_activity_time = self._now()
-        neutral_pose = create_head_pose(0, 0, 0, 0, 0, 0, degrees=True)
+        neutral_pose = create_head_pose(0, 0, 0, 0, 0, 0, degrees=True).astype(np.float32)
         self.state.last_primary_pose = (neutral_pose, (0.0, 0.0), 0.0)
 
         # Move queue (primary moves)
@@ -509,8 +506,8 @@ class MovementManager:
                     self.state.update_activity()
 
                     breathing_move = BreathingMove(
-                        interpolation_start_pose=current_head_pose,
-                        interpolation_start_antennas=current_antennas,
+                        interpolation_start_pose=current_head_pose.astype(np.float32),
+                        interpolation_start_antennas=(float(current_antennas[0]), float(current_antennas[1])),
                         interpolation_duration=1.0,
                     )
                     self.move_queue.append(breathing_move)
@@ -543,9 +540,9 @@ class MovementManager:
                 body_yaw = 0.0
 
             antennas_tuple = (float(antennas[0]), float(antennas[1]))
-            head_copy = head.copy()
+            head_copy = head.astype(np.float32)
             primary_full_body_pose = (
-                head_copy,
+                head_copy.astype(np.float32),
                 antennas_tuple,
                 float(body_yaw),
             )
@@ -555,7 +552,7 @@ class MovementManager:
         elif self.state.last_primary_pose is not None:
             primary_full_body_pose = clone_full_body_pose(self.state.last_primary_pose)
         else:
-            neutral_head_pose = create_head_pose(0, 0, 0, 0, 0, 0, degrees=True)
+            neutral_head_pose = create_head_pose(0, 0, 0, 0, 0, 0, degrees=True).astype(np.float32)
             primary_full_body_pose = (neutral_head_pose, (0.0, 0.0), 0.0)
             self.state.last_primary_pose = clone_full_body_pose(primary_full_body_pose)
 
@@ -583,7 +580,7 @@ class MovementManager:
             degrees=False,
             mm=False,
         )
-        return (secondary_head_pose, (0.0, 0.0), 0.0)
+        return (secondary_head_pose.astype(np.float32), (0.0, 0.0), 0.0)
 
     def _compose_full_body_pose(self, current_time: float) -> FullBodyPose:
         """Compose primary and secondary poses into a single command pose."""
@@ -635,7 +632,7 @@ class MovementManager:
     def _issue_control_command(self, head: NDArray[np.float32], antennas: Tuple[float, float], body_yaw: float) -> None:
         """Send the fused pose to the robot with throttled error logging."""
         try:
-            self.current_robot.set_target(head=head, antennas=antennas, body_yaw=body_yaw)
+            self.current_robot.set_target(head=head.astype(np.float64), antennas=list(antennas), body_yaw=body_yaw)
         except Exception as e:
             now = self._now()
             if now - self._last_set_target_err >= self._set_target_err_interval:
