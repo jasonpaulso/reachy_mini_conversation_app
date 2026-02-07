@@ -13,7 +13,11 @@ import numpy as np
 from fastrtc import AdditionalOutputs, AsyncStreamHandler, wait_for_item
 from numpy.typing import NDArray
 from elevenlabs.client import ElevenLabs
-from elevenlabs.conversational_ai.conversation import ClientTools, Conversation
+from elevenlabs.conversational_ai.conversation import (
+    ClientTools,
+    Conversation,
+    ConversationInitiationData,
+)
 
 from reachy_mini_conversation_app.config import config
 from reachy_mini_conversation_app.elevenlabs_audio import (
@@ -142,6 +146,7 @@ class ElevenLabsRealtimeHandler(AsyncStreamHandler):
             requires_auth=True,
             audio_interface=self._audio_interface,
             client_tools=client_tools,
+            config=self._build_initiation_config(),
             callback_agent_response=self._on_agent_response,
             callback_agent_response_correction=self._on_agent_response_correction,
             callback_user_transcript=self._on_user_transcript,
@@ -254,6 +259,7 @@ class ElevenLabsRealtimeHandler(AsyncStreamHandler):
             requires_auth=True,
             audio_interface=self._audio_interface,
             client_tools=client_tools,
+            config=self._build_initiation_config(),
             callback_agent_response=self._on_agent_response,
             callback_agent_response_correction=self._on_agent_response_correction,
             callback_user_transcript=self._on_user_transcript,
@@ -264,6 +270,27 @@ class ElevenLabsRealtimeHandler(AsyncStreamHandler):
         logger.info("Switched to ElevenLabs agent: %s", new_agent_id[:8] + "...")
 
         return f"Applied personality '{profile or 'default'}' with new agent."
+
+    @staticmethod
+    def _build_initiation_config() -> ConversationInitiationData:
+        """Build ConversationInitiationData with client tool definitions.
+
+        ElevenLabs needs tool schemas sent at session start so the LLM knows
+        which tools are available.  The SDK doesn't auto-send them, so we
+        pass them via conversation_config_override -> agent.prompt.tools.
+        """
+        el_tools = []
+        for spec in get_tool_specs():
+            el_tools.append({
+                "type": "client",
+                "name": spec["name"],
+                "description": spec["description"],
+                "parameters": spec["parameters"],
+            })
+
+        override = {"agent": {"prompt": {"tools": el_tools}}}
+        logger.info("Sending %d tool definitions to ElevenLabs", len(el_tools))
+        return ConversationInitiationData(conversation_config_override=override)
 
     def _register_tools(self, client_tools: ClientTools) -> None:
         """Register tool handlers with ElevenLabs ClientTools.
@@ -287,10 +314,11 @@ class ElevenLabsRealtimeHandler(AsyncStreamHandler):
                         if self.deps.head_wobbler is not None:
                             self.deps.head_wobbler.reset()
 
-                        return result
+                        # ElevenLabs expects a string result, not a dict
+                        return json.dumps(result)
                     except Exception as e:
                         logger.error("Tool '%s' failed: %s", name, e)
-                        return {"error": str(e)}
+                        return str(e)
 
                 return handler
 

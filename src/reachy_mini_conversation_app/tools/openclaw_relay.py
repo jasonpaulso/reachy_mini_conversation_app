@@ -10,6 +10,7 @@ import json
 import base64
 import asyncio
 import logging
+import concurrent.futures
 from typing import Any, Dict, Optional
 
 import cv2
@@ -98,10 +99,10 @@ async def _execute_robot_actions(response_text: str, deps: ToolDependencies) -> 
 
 
 # Pre-fetched response storage (set by ElevenLabs handler on transcript callback)
-_pending_response: Optional[asyncio.Future[Any]] = None
+_pending_response: Optional[concurrent.futures.Future[Any]] = None
 
 
-def set_pending_response(future: asyncio.Future[Any]) -> None:
+def set_pending_response(future: concurrent.futures.Future[Any]) -> None:
     """Store a pre-fetched OpenClaw response future for the relay tool to await.
 
     Called by the ElevenLabs handler when a user transcript arrives, so the
@@ -115,7 +116,7 @@ def set_pending_response(future: asyncio.Future[Any]) -> None:
     _pending_response = future
 
 
-def take_pending_response() -> Optional[asyncio.Future[Any]]:
+def take_pending_response() -> Optional[concurrent.futures.Future[Any]]:
     """Take and clear the pending pre-fetched response future.
 
     Returns:
@@ -172,7 +173,10 @@ class OpenclawRelay(Tool):
         pending = take_pending_response()
         if pending is not None and not pending.cancelled():
             try:
-                response = await asyncio.wait_for(asyncio.shield(pending), timeout=30.0)
+                # run_coroutine_threadsafe returns concurrent.futures.Future;
+                # wrap it so asyncio can await it
+                async_future = asyncio.wrap_future(pending)
+                response = await asyncio.wait_for(async_future, timeout=30.0)
                 logger.info("Using pre-fetched OpenClaw response")
             except (asyncio.TimeoutError, asyncio.CancelledError, Exception) as e:
                 logger.warning("Pre-fetched response unavailable (%s), making fresh request", e)
